@@ -1,15 +1,15 @@
 <?php
 
-namespace VendorName\Skeleton;
+namespace JFA\PhiCmsCore;
 
 use Filament\Contracts\Plugin;
 use Filament\Panel;
 
-class SkeletonPlugin implements Plugin
+class PhiCmsCorePlugin implements Plugin
 {
     public function getId(): string
     {
-        return 'skeleton';
+        return 'phi-cms-core';
     }
 
     public function register(Panel $panel): void

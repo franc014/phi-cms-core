@@ -1,12 +1,12 @@
 <?php
 
-namespace VendorName\Skeleton\Commands;
+namespace JFA\PhiCmsCore\Commands;
 
 use Illuminate\Console\Command;
 
-class SkeletonCommand extends Command
+class PhiCmsCoreCommand extends Command
 {
-    public $signature = 'skeleton';
+    public $signature = 'phi-cms-core';
 
     public $description = 'My command';
 
