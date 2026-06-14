@@ -2,19 +2,16 @@
 
 namespace JFA\PhiCmsCore;
 
-use Filament\Support\Assets\AlpineComponent;
 use Filament\Support\Assets\Asset;
-use Filament\Support\Assets\Css;
-use Filament\Support\Assets\Js;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
+use JFA\PhiCmsCore\Commands\PhiCmsCoreCommand;
+use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
 use Livewire\Features\SupportTesting\Testable;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use JFA\PhiCmsCore\Commands\PhiCmsCoreCommand;
-use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
 
 class PhiCmsCoreServiceProvider extends PackageServiceProvider
 {
@@ -24,11 +21,6 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function configurePackage(Package $package): void
     {
-        /*
-         * This class is a Package Service Provider
-         *
-         * More info: https://github.com/spatie/laravel-package-tools
-         */
         $package->name(static::$name)
             ->hasCommands($this->getCommands())
             ->hasInstallCommand(function (InstallCommand $command) {
@@ -62,7 +54,6 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
-        // Asset Registration
         FilamentAsset::register(
             $this->getAssets(),
             $this->getAssetPackageName()
@@ -73,19 +64,23 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             $this->getAssetPackageName()
         );
 
-        // Icon Registration
         FilamentIcon::register($this->getIcons());
 
-        // Handle Stubs
         if (app()->runningInConsole()) {
             foreach (app(Filesystem::class)->files(__DIR__ . '/../stubs/') as $file) {
                 $this->publishes([
                     $file->getRealPath() => base_path("stubs/phi-cms-core/{$file->getFilename()}"),
                 ], 'phi-cms-core-stubs');
             }
+
+            $settingsPath = __DIR__ . '/../database/settings';
+            if (is_dir($settingsPath)) {
+                $this->publishes([
+                    $settingsPath => database_path('settings'),
+                ], 'phi-cms-core-settings-migrations');
+            }
         }
 
-        // Testing
         Testable::mixin(new TestsPhiCmsCore);
     }
 
@@ -99,11 +94,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
      */
     protected function getAssets(): array
     {
-        return [
-            // AlpineComponent::make('phi-cms-core', __DIR__ . '/../resources/dist/components/phi-cms-core.js'),
-            // Css::make('phi-cms-core-styles', __DIR__ . '/../resources/dist/phi-cms-core.css'),
-            // Js::make('phi-cms-core-scripts', __DIR__ . '/../resources/dist/phi-cms-core.js'),
-        ];
+        return [];
     }
 
     /**
@@ -146,7 +137,14 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     protected function getMigrations(): array
     {
         return [
-            'create_phi-cms-core_table',
+            'create_sections_table',
+            'create_pages_table',
+            'create_page_section_table',
+            'create_menus_table',
+            'create_menu_items_table',
+            'create_posts_table',
+            'create_categories_table',
+            'create_category_post_table',
         ];
     }
 }
