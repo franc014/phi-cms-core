@@ -4,12 +4,14 @@ namespace JFA\PhiCmsCore;
 
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
+use Filament\Actions\DetachAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ReplicateAction;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
 use Filament\Support\Colors\Color;
-use Filament\Tables\Actions\DissociateAction;
+use Filament\Support\Facades\FilamentColor;
+use Filament\Support\Icons\Heroicon;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Pages\ManageCompany;
 use JFA\PhiCmsCore\Resources\Categories\CategoryResource;
@@ -63,35 +65,31 @@ class PhiCmsCorePlugin implements Plugin
         }
     }
 
-    protected function configureFilament(): void
+    public function configureFilament(): void
     {
-        Color::configureUsing(fn ($color) => $color === null, true);
+        FilamentColor::register([
+            'accent' => Color::Cyan,
+        ]);
 
-        $panel = Action::configureUsing(
-            fn (Action $action) => $action
-                ->slideOver()
-                ->modalWidth('6xl')
-        );
+        Action::configureUsing(function (Action $action) {
+            return $action->slideOver()->modalWidth('6xl');
+        });
+        ReplicateAction::configureUsing(function (ReplicateAction $action) {
+            return $action->color('info')->modalHeading(__('You are about to duplicate this item. Are you sure?'))
+                ->slideOver(false)
+                ->modalIcon(Heroicon::ExclamationTriangle)
+                ->modalWidth('2xl');
+        });
+        EditAction::configureUsing(function (EditAction $action) {
+            return $action->color('success');
+        });
 
-        ReplicateAction::configureUsing(
-            fn (ReplicateAction $action) => $action
-                ->successNotificationTitle('Record replicated')
-        );
-
-        EditAction::configureUsing(
-            fn (EditAction $action) => $action
-                ->successNotificationTitle('Record saved')
-        );
-
-        DeleteAction::configureUsing(
-            fn (DeleteAction $action) => $action
-                ->successNotificationTitle('Record deleted')
-        );
-
-        DissociateAction::configureUsing(
-            fn (DissociateAction $action) => $action
-                ->successNotificationTitle('Record dissociated')
-        );
+        DeleteAction::configureUsing(function (DeleteAction $action) {
+            return $action->slideOver(false)->modalWidth('2xl');
+        });
+        DetachAction::configureUsing(function (DetachAction $action) {
+            return $action->slideOver(false)->modalWidth('2xl');
+        });
     }
 
     public static function make(): static

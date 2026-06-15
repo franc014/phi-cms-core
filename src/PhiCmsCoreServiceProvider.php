@@ -6,7 +6,6 @@ use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
-use JFA\PhiCmsCore\Commands\PhiCmsCoreCommand;
 use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
 use Livewire\Features\SupportTesting\Testable;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
@@ -25,10 +24,23 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             ->hasCommands($this->getCommands())
             ->hasInstallCommand(function (InstallCommand $command) {
                 $command
+                    ->startWith(function (InstallCommand $command) {
+                        $command->comment('Publishing Spatie Tags migrations...');
+                        $command->call('vendor:publish', [
+                            '--provider' => 'Spatie\Tags\TagsServiceProvider',
+                            '--tag' => 'tags-migrations',
+                        ]);
+
+                        $command->comment('Publishing Spatie Settings migrations...');
+                        $command->call('vendor:publish', [
+                            '--provider' => 'Spatie\LaravelSettings\LaravelSettingsServiceProvider',
+                            '--tag' => 'migrations',
+                        ]);
+                    })
                     ->publishConfigFile()
                     ->publishMigrations()
-                    ->askToRunMigrations()
-                    ->askToStarRepoOnGitHub('franc014/phi-cms-core');
+                    ->publish('settings-migrations')
+                    ->askToRunMigrations();
             });
 
         $configFileName = $package->shortName();
@@ -102,9 +114,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
      */
     protected function getCommands(): array
     {
-        return [
-            PhiCmsCoreCommand::class,
-        ];
+        return [];
     }
 
     /**
