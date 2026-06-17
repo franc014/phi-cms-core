@@ -6,7 +6,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\Cache;
-use JFA\PhiCmsCore\CMS\ContentResolver;
 use JFA\PhiCmsCore\Enums\PageStatus;
 
 class Page extends Model
@@ -70,22 +69,5 @@ class Page extends Model
                 $query->orderBy('order_column');
             })
             ->firstOrFail();
-    }
-
-    public function sectionsForUI(): ?array
-    {
-        $sectionsKeyed = $this->sections->keyBy('slug');
-
-        $sectionsMapped = $sectionsKeyed->map(function ($section) {
-            $contentResolver = new ContentResolver($section, pageId: $this->id);
-
-            return [
-                'title' => $section->title,
-                'slug' => $section->slug,
-                'content' => $contentResolver->resolve(),
-            ];
-        });
-
-        return $sectionsMapped->all();
     }
 }

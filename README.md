@@ -5,34 +5,40 @@
 [![GitHub Code Style Action Status](https://img.shields.io/github/actions/workflow/status/franc014/phi-cms-core/fix-php-code-style-issues.yml?branch=main&label=code%20style&style=flat-square)](https://github.com/franc014/phi-cms-core/actions?query=workflow%3A"Fix+PHP+code+styling"+branch%3Amain)
 [![Total Downloads](https://img.shields.io/packagist/dt/franc014/phi-cms-core.svg?style=flat-square)](https://packagist.org/packages/franc014/phi-cms-core)
 
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
+A Filament v5 plugin that provides a complete CMS layer with pages, sections, posts, categories, menus, and company settings — built on Spatie packages.
+
+## Requirements
+
+- PHP 8.3+
+- Laravel 13+
+- Filament v5+
+- A database supported by Laravel (MySQL, PostgreSQL, SQLite, SQL Server)
 
 ## Installation
 
-You can install the package via composer:
+### 1. Require the package
 
 ```bash
 composer require franc014/phi-cms-core
 ```
 
-> [!IMPORTANT]
-> If you have not set up a custom theme and are using Filament Panels follow the instructions in the [Filament Docs](https://filamentphp.com/docs/styling/overview) first.
+This will pull in all required dependencies automatically, including:
+- `filament/filament` (v5)
+- `filament/spatie-laravel-media-library-plugin`
+- `filament/spatie-laravel-tags-plugin`
+- `filament/spatie-laravel-settings-plugin`
+- `spatie/laravel-medialibrary`
+- `spatie/laravel-tags`
+- `spatie/laravel-settings`
+- `spatie/eloquent-sortable`
 
-After setting up a custom theme add the plugin's views to your theme css file or your app's css file if using the standalone packages.
-
-```css
-@source '../../../../vendor/franc014/phi-cms-core/resources/**/*.blade.php';
-```
-
-### Install Command
-
-Run the install command to publish all configuration, migrations, and dependencies in one step:
+### 2. Run the install command
 
 ```bash
 php artisan phi-cms-core:install
 ```
 
-This command will:
+This will:
 
 1. **Publish Spatie Tags migrations** (`tags` and `taggables` tables)
 2. **Publish Spatie Settings migration** (`settings` table)
@@ -41,9 +47,67 @@ This command will:
 5. **Publish the company settings migration** (CompanySettings default values)
 6. **Ask to run all migrations**
 
-### Manual Installation
+### 3. Run migrations (if you didn't accept the prompt)
 
-If you prefer to publish resources individually, run the following commands:
+```bash
+php artisan migrate
+```
+
+### 4. Create a Filament admin panel
+
+If you don't already have a Filament panel, create one:
+
+```bash
+php artisan make:filament-panel admin
+```
+
+### 5. Register the plugin
+
+Open `app/Providers/Filament/AdminPanelProvider.php` and add the plugin:
+
+```php
+use JFA\PhiCmsCore\PhiCmsCorePlugin;
+
+class AdminPanelProvider extends PanelProvider
+{
+    public function panel(Panel $panel): Panel
+    {
+        return $panel
+            // ...
+            ->plugins([
+                PhiCmsCorePlugin::make(),
+            ]);
+    }
+}
+```
+
+### 6. Create a test admin user
+
+```bash
+php artisan make:filament-user
+```
+
+Follow the prompts to set a name, email, and password. Then visit `/admin` and log in.
+
+## Custom Theme (Recommended)
+
+If you have not set up a custom theme for Filament, follow the [Filament Styling Docs](https://filamentphp.com/docs/styling/overview) first.
+
+Once your theme is set up, add the plugin's views to your theme CSS file (or your app's CSS file if using standalone packages):
+
+```css
+@source '../../../../vendor/franc014/phi-cms-core/resources/**/*.blade.php';
+```
+
+Then rebuild your assets:
+
+```bash
+npm run build
+```
+
+## Manual Installation
+
+If you prefer to publish resources individually instead of using the install command:
 
 ```bash
 # Publish Spatie Tags migrations
@@ -65,15 +129,45 @@ php artisan vendor:publish --tag="phi-cms-core-settings-migrations"
 php artisan migrate
 ```
 
-Optionally, you can publish the views:
+Optionally, publish the views:
 
 ```bash
 php artisan vendor:publish --tag="phi-cms-core-views"
 ```
 
-This is the contents of the published config file:
+## What You Get
+
+After installation, the following is available in the admin panel:
+
+### Resources
+
+| Resource | Description |
+|---|---|
+| **Pages** | CMS pages with sections, publishing, slugs, and metatags |
+| **Sections** | Reusable content sections with components |
+| **Posts** | Blog posts with tags, categories, publishing, and content blocks |
+| **Categories** | Post categorization |
+| **Menus** | Navigation menus with sortable items |
+
+### Pages
+
+| Page | Description |
+|---|---|
+| **ManageCompany** | Company settings (name, email, phone, address, social media, working days) |
+
+### Content Blocks
+
+Content blocks are registered via `ContentBlockRegistry` and configured in `config/phi-cms-core.php`:
+
+- **Heading** — h1 through h6 headings
+- **Paragraph** — Rich text paragraphs
+- **CustomRichEditor** — Rich content with custom blocks (CTA, etc.)
+- **PostsChooser** — Post selection widget
+
+You can extend the default blocks by adding your own to the `custom` array in the config:
 
 ```php
+// config/phi-cms-core.php
 return [
     'content_blocks' => [
         'default' => [
@@ -83,17 +177,10 @@ return [
             PostsChooser::class,
         ],
         'custom' => [
-            // \App\CMS\Blocks\CustomBlock::class,
+            \App\CMS\Blocks\HeroBlock::class,
         ],
     ],
 ];
-```
-
-## Usage
-
-```php
-$phiCmsCore = new JFA\PhiCmsCore();
-echo $phiCmsCore->echoPhrase('Hello, JFA!');
 ```
 
 ## Testing
