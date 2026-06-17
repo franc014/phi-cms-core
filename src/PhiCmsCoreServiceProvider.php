@@ -25,6 +25,12 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             ->hasInstallCommand(function (InstallCommand $command) {
                 $command
                     ->startWith(function (InstallCommand $command) {
+                        $command->comment('Publishing Spatie Media Library migrations...');
+                        $command->call('vendor:publish', [
+                            '--provider' => 'Spatie\MediaLibrary\MediaLibraryServiceProvider',
+                            '--tag' => 'medialibrary-migrations',
+                        ]);
+
                         $command->comment('Publishing Spatie Tags migrations...');
                         $command->call('vendor:publish', [
                             '--provider' => 'Spatie\Tags\TagsServiceProvider',

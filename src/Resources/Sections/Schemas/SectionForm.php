@@ -4,6 +4,7 @@ namespace JFA\PhiCmsCore\Resources\Sections\Schemas;
 
 use Filament\Forms\Components\SpatieMediaLibraryFileUpload;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use JFA\PhiCmsCore\Forms\Components\SharedFields;
@@ -17,6 +18,11 @@ class SectionForm
     {
         return [
             ...self::titleAndSlugFields(),
+            TextInput::make('type')
+                ->label(__('phi-cms-core::phi-cms-core.type'))
+                ->maxLength(100)
+                ->placeholder('hero')
+                ->helperText(__('phi-cms-core::phi-cms-core.section_type_helper')),
             Textarea::make('description')
                 ->label(__('phi-cms-core::phi-cms-core.description'))
                 ->required()

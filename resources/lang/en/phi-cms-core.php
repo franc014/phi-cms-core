@@ -30,6 +30,7 @@ return [
     // Section form
     'general_information' => 'General Information',
     'section_content' => 'Section Content',
+    'section_type_helper' => 'Defines the Blade template used to render this section.',
     'section_images' => 'Section Images',
     'loading_images' => 'Loading images...',
     'from_component_library' => 'From Component Library',

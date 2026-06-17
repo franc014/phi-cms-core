@@ -46,6 +46,8 @@ class PhiCmsCorePlugin implements Plugin
 
     public function boot(Panel $panel): void
     {
+        //configure defaults
+
         $this->registerContentBlocks();
         $this->configureFilament();
     }

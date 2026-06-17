@@ -13,6 +13,7 @@ return new class extends Migration {
             $table->string('title', 100);
             $table->text('description');
             $table->string('slug', 100);
+            $table->string('type', 100)->nullable();
             $table->json('content');
             $table->string('status')->default('active');
             $table->timestamps();
