@@ -6,6 +6,8 @@ use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
+use JFA\PhiCmsCore\Schema\FieldFactory;
+use JFA\PhiCmsCore\Schema\SchemaRegistry;
 use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
 use Livewire\Features\SupportTesting\Testable;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
@@ -55,6 +57,10 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             $package->hasConfigFile();
         }
 
+        if (file_exists($package->basePath('/../config/phi-cms-schema.php'))) {
+            $package->hasConfigFile('phi-cms-schema');
+        }
+
         if (file_exists($package->basePath('/../database/migrations'))) {
             $package->hasMigrations($this->getMigrations());
         }
@@ -68,7 +74,15 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         }
     }
 
-    public function packageRegistered(): void {}
+    public function packageRegistered(): void
+    {
+        $this->app->singleton(SchemaRegistry::class, function (): SchemaRegistry {
+            return SchemaRegistry::fromConfig(
+                config('phi-cms-schema.blocks', []),
+                new FieldFactory,
+            );
+        });
+    }
 
     public function packageBooted(): void
     {
@@ -85,6 +99,10 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         FilamentIcon::register($this->getIcons());
 
         if (app()->runningInConsole()) {
+            $this->publishes([
+                $this->package->basePath('/../config/phi-cms-schema.php') => config_path('phi-cms-schema.php'),
+            ], 'phi-cms-schema-config');
+
             foreach (app(Filesystem::class)->files(__DIR__ . '/../stubs/') as $file) {
                 $this->publishes([
                     $file->getRealPath() => base_path("stubs/phi-cms-core/{$file->getFilename()}"),

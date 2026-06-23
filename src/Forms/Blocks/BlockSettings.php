@@ -7,17 +7,19 @@ use Illuminate\Support\Str;
 
 trait BlockSettings
 {
-    private static function setBlockLabel($state, $type)
+    private static function setBlockLabel($state, $type, ?string $labelField = null)
     {
         if ($state === null) {
             return ucfirst($type);
         }
 
-        $content = $state['content']
-            ?? $state['heading']
-            ?? $state['section_title']
-            ?? $state['title']
-            ?? '';
+        $content = $labelField !== null
+            ? ($state[$labelField] ?? '')
+            : ($state['content']
+                ?? $state['heading']
+                ?? $state['section_title']
+                ?? $state['title']
+                ?? '');
 
         if (empty($content)) {
             return ucfirst($type);
