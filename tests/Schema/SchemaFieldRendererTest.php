@@ -11,6 +11,7 @@ use JFA\PhiCmsCore\Schema\Fields\RichField;
 use JFA\PhiCmsCore\Schema\Fields\SelectField;
 use JFA\PhiCmsCore\Schema\Fields\StringField;
 use JFA\PhiCmsCore\Schema\Fields\TextField;
+use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
 use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
 
 it('renders a string field as text input', function () {
@@ -49,6 +50,14 @@ it('renders a rich field as rich editor', function () {
         ->and($component->getName())->toBe('content');
 });
 
+it('renders a rich field with custom blocks and json', function () {
+    $renderer = new SchemaFieldRenderer;
+
+    $component = $renderer->render(new RichField('content', true, null, customBlocks: [stdClass::class], json: true));
+
+    expect($component)->toBeInstanceOf(RichEditor::class);
+});
+
 it('renders a repeater field with nested components', function () {
     $renderer = new SchemaFieldRenderer;
 
@@ -67,6 +76,17 @@ it('throws when rendering an unregistered custom field', function () {
     $renderer->render(new CustomField('posts', 'posts_chooser'));
 })->throws(InvalidArgumentException::class);
 
+it('renders a registered posts chooser custom field', function () {
+    $renderer = new SchemaFieldRenderer([
+        'posts_chooser' => app(PostsChooserFieldHandler::class),
+    ]);
+
+    $component = $renderer->render(new CustomField('posts', 'posts_chooser'));
+
+    expect($component)->toBeInstanceOf(Select::class)
+        ->and($component->getName())->toBe('posts');
+});
+
 it('translates field labels', function () {
     app('translator')->addLines(['test.section_title' => 'Translated Title'], 'en');
 
@@ -75,6 +95,16 @@ it('translates field labels', function () {
     $component = $renderer->render(new StringField('section_title', false, null, 'test.section_title'));
 
     expect($component->getLabel())->toBe('Translated Title');
+});
+
+it('translates select option labels', function () {
+    app('translator')->addLines(['test.option_one' => 'First Option'], 'en');
+
+    $renderer = new SchemaFieldRenderer;
+
+    $component = $renderer->render(new SelectField('level', true, ['one' => 'test.option_one'], null));
+
+    expect($component->getOptions())->toBe(['one' => 'First Option']);
 });
 
 it('applies the repeater label when provided', function () {

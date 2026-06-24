@@ -18,6 +18,11 @@ use JFA\PhiCmsCore\Schema\Fields\TextField;
 
 final readonly class SchemaFieldRenderer
 {
+    /**
+     * @param  array<string, CustomFieldHandler>  $customHandlers
+     */
+    public function __construct(private array $customHandlers = []) {}
+
     public function render(Field $field): Component
     {
         return match (true) {
@@ -80,7 +85,7 @@ final readonly class SchemaFieldRenderer
     private function renderSelect(SelectField $field): Select
     {
         $select = Select::make($field->name)
-            ->options($field->options);
+            ->options(array_map(fn (string $label): string => __($label), $field->options));
 
         if ($field->label !== null) {
             $select->label(__($field->label));
@@ -113,6 +118,14 @@ final readonly class SchemaFieldRenderer
             $editor->live(debounce: 500);
         }
 
+        if ($field->customBlocks !== []) {
+            $editor->customBlocks($field->customBlocks);
+        }
+
+        if ($field->json) {
+            $editor->json();
+        }
+
         return $editor;
     }
 
@@ -143,6 +156,10 @@ final readonly class SchemaFieldRenderer
 
     private function renderCustom(CustomField $field): Component
     {
-        throw new InvalidArgumentException("Custom field handler [{$field->handler}] is not registered.");
+        if (! isset($this->customHandlers[$field->handler])) {
+            throw new InvalidArgumentException("Custom field handler [{$field->handler}] is not registered.");
+        }
+
+        return $this->customHandlers[$field->handler]->handle($field);
     }
 }

@@ -3,27 +3,24 @@
 namespace JFA\PhiCmsCore\Forms\Blocks;
 
 use Filament\Forms\Components\Builder\Block;
-use Filament\Forms\Components\Textarea;
-use Filament\Support\Icons\Heroicon;
 use JFA\PhiCmsCore\Contracts\ContentBlock;
+use JFA\PhiCmsCore\Forms\Blocks\Concerns\RendersSchemaFields;
+use JFA\PhiCmsCore\Schema\SchemaRegistry;
 
 class Paragraph implements ContentBlock
 {
     use BlockSettings;
+    use RendersSchemaFields;
 
     public static function make(): Block
     {
-        return Block::make('paragraph')
-            ->schema([
-                Textarea::make('content')
-                    ->label('Paragraph')
-                    ->maxLength(2048)
-                    ->live(debounce: 500)
-                    ->required(),
-            ])
+        $schema = app(SchemaRegistry::class)->get('paragraph');
+
+        return Block::make($schema->type)
+            ->schema(static::schemaComponents('paragraph'))
             ->label(function (?array $state): string {
                 return self::setBlockLabel($state, 'Paragraph');
             })
-            ->icon(Heroicon::Bars3BottomLeft);
+            ->icon($schema->adminMeta['icon']);
     }
 }

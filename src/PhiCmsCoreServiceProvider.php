@@ -7,6 +7,8 @@ use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
 use JFA\PhiCmsCore\Schema\FieldFactory;
+use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
+use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
 use JFA\PhiCmsCore\Schema\SchemaRegistry;
 use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
 use Livewire\Features\SupportTesting\Testable;
@@ -76,6 +78,12 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
+        $this->app->singleton(SchemaFieldRenderer::class, function (): SchemaFieldRenderer {
+            return new SchemaFieldRenderer([
+                'posts_chooser' => app(PostsChooserFieldHandler::class),
+            ]);
+        });
+
         $this->app->singleton(SchemaRegistry::class, function (): SchemaRegistry {
             return SchemaRegistry::fromConfig(
                 config('phi-cms-schema.blocks', []),

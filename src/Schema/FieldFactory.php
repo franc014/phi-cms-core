@@ -52,6 +52,8 @@ final readonly class FieldFactory
                 required: (bool) ($config['required'] ?? false),
                 label: $config['label'] ?? null,
                 live: $live,
+                customBlocks: $config['custom_blocks'] ?? [],
+                json: (bool) ($config['json'] ?? false),
             ),
             'repeater' => new RepeaterField(
                 name: $name,
@@ -63,6 +65,7 @@ final readonly class FieldFactory
             'posts_chooser', 'custom' => new CustomField(
                 name: $name,
                 handler: $config['handler'] ?? $type,
+                config: $config['config'] ?? [],
             ),
             default => throw new InvalidArgumentException("Unsupported field type [{$type}] for field [{$name}]."),
         };
