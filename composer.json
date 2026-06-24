@@ -35,6 +35,7 @@
     },
     "require-dev": {
         "larastan/larastan": "^3.0",
+        "laravel/pao": "^1.1",
         "laravel/pint": "^1.0",
         "nunomaduro/collision": "^8.0",
         "orchestra/testbench": "^9.0|^10.0|^11.0",
