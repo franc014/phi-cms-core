@@ -19,6 +19,7 @@ use JFA\PhiCmsCore\Resources\Menus\MenuResource;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Resources\Posts\PostResource;
 use JFA\PhiCmsCore\Resources\Sections\SectionResource;
+use JFA\PhiCmsCore\Schema\SchemaRegistry;
 
 class PhiCmsCorePlugin implements Plugin
 {
@@ -46,7 +47,7 @@ class PhiCmsCorePlugin implements Plugin
 
     public function boot(Panel $panel): void
     {
-        //configure defaults
+        // configure defaults
 
         $this->registerContentBlocks();
         $this->configureFilament();
@@ -55,15 +56,14 @@ class PhiCmsCorePlugin implements Plugin
     protected function registerContentBlocks(): void
     {
         $registry = app(ContentBlockRegistry::class);
+        $schemaRegistry = app(SchemaRegistry::class);
 
-        $config = config('phi-cms-core.content_blocks', []);
+        foreach ($schemaRegistry->all() as $schema) {
+            if ($schema->adminClass === null) {
+                continue;
+            }
 
-        foreach ($config['default'] ?? [] as $block) {
-            $registry->registerDefault($block);
-        }
-
-        foreach ($config['custom'] ?? [] as $block) {
-            $registry->registerCustom($block);
+            $registry->register($schema->adminClass);
         }
     }
 

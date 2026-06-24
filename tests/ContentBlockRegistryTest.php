@@ -9,8 +9,8 @@ use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 it('can register and retrieve blocks', function () {
     $registry = new ContentBlockRegistry;
 
-    $registry->registerDefault(TestHeadingBlock::class);
-    $registry->registerCustom(TestHeroBlock::class);
+    $registry->register(TestHeadingBlock::class);
+    $registry->register(TestHeroBlock::class);
 
     expect($registry->getAll())->toHaveCount(2);
 });
@@ -18,8 +18,8 @@ it('can register and retrieve blocks', function () {
 it('can find a block by name', function () {
     $registry = new ContentBlockRegistry;
 
-    $registry->registerDefault(TestHeadingBlock::class);
-    $registry->registerCustom(TestHeroBlock::class);
+    $registry->register(TestHeadingBlock::class);
+    $registry->register(TestHeroBlock::class);
 
     $block = $registry->getByName('hero');
 
@@ -30,7 +30,7 @@ it('can find a block by name', function () {
 it('returns null when block name is not found', function () {
     $registry = new ContentBlockRegistry;
 
-    $registry->registerDefault(TestHeadingBlock::class);
+    $registry->register(TestHeadingBlock::class);
 
     $block = $registry->getByName('nonexistent');
 

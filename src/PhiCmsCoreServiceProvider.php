@@ -47,17 +47,10 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                             '--tag' => 'migrations',
                         ]);
                     })
-                    ->publishConfigFile()
                     ->publishMigrations()
                     ->publish('settings-migrations')
                     ->askToRunMigrations();
             });
-
-        $configFileName = $package->shortName();
-
-        if (file_exists($package->basePath("/../config/{$configFileName}.php"))) {
-            $package->hasConfigFile();
-        }
 
         if (file_exists($package->basePath('/../config/phi-cms-schema.php'))) {
             $package->hasConfigFile('phi-cms-schema');
