@@ -5,7 +5,6 @@ use Filament\Forms\Components\TextInput;
 use Filament\Support\Icons\Heroicon;
 use JFA\PhiCmsCore\Contracts\ContentBlock;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
-use JFA\PhiCmsCore\PhiCmsCorePlugin;
 use JFA\PhiCmsCore\Schema\SchemaRegistry;
 
 it('registers content blocks from the schema config', function () {
@@ -23,12 +22,7 @@ it('registers content blocks from the schema config', function () {
     ]);
 
     app()->forgetInstance(SchemaRegistry::class);
-    app()->singleton(ContentBlockRegistry::class);
-
-    $plugin = PhiCmsCorePlugin::make();
-    $method = new ReflectionMethod($plugin, 'registerContentBlocks');
-    $method->setAccessible(true);
-    $method->invoke($plugin);
+    app()->forgetInstance(ContentBlockRegistry::class);
 
     $registry = app(ContentBlockRegistry::class);
 

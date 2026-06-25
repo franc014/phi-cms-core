@@ -12,14 +12,12 @@ use Filament\Panel;
 use Filament\Support\Colors\Color;
 use Filament\Support\Facades\FilamentColor;
 use Filament\Support\Icons\Heroicon;
-use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Pages\ManageCompany;
 use JFA\PhiCmsCore\Resources\Categories\CategoryResource;
 use JFA\PhiCmsCore\Resources\Menus\MenuResource;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Resources\Posts\PostResource;
 use JFA\PhiCmsCore\Resources\Sections\SectionResource;
-use JFA\PhiCmsCore\Schema\SchemaRegistry;
 
 class PhiCmsCorePlugin implements Plugin
 {
@@ -30,8 +28,6 @@ class PhiCmsCorePlugin implements Plugin
 
     public function register(Panel $panel): void
     {
-        app()->singleton(ContentBlockRegistry::class);
-
         $panel
             ->resources([
                 CategoryResource::class,
@@ -47,24 +43,7 @@ class PhiCmsCorePlugin implements Plugin
 
     public function boot(Panel $panel): void
     {
-        // configure defaults
-
-        $this->registerContentBlocks();
         $this->configureFilament();
-    }
-
-    protected function registerContentBlocks(): void
-    {
-        $registry = app(ContentBlockRegistry::class);
-        $schemaRegistry = app(SchemaRegistry::class);
-
-        foreach ($schemaRegistry->all() as $schema) {
-            if ($schema->adminClass === null) {
-                continue;
-            }
-
-            $registry->register($schema->adminClass);
-        }
     }
 
     public function configureFilament(): void

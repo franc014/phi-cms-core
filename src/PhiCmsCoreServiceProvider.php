@@ -6,6 +6,7 @@ use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
+use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Schema\FieldFactory;
 use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
 use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
@@ -71,17 +72,32 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
-        $this->app->singleton(SchemaFieldRenderer::class, function (): SchemaFieldRenderer {
-            return new SchemaFieldRenderer([
-                'posts_chooser' => app(PostsChooserFieldHandler::class),
-            ]);
-        });
-
         $this->app->singleton(SchemaRegistry::class, function (): SchemaRegistry {
             return SchemaRegistry::fromConfig(
                 config('phi-cms-schema.blocks', []),
                 new FieldFactory,
             );
+        });
+
+        $this->app->singleton(ContentBlockRegistry::class, function (): ContentBlockRegistry {
+            $registry = new ContentBlockRegistry;
+            $schemaRegistry = app(SchemaRegistry::class);
+
+            foreach ($schemaRegistry->all() as $schema) {
+                if ($schema->adminClass === null) {
+                    continue;
+                }
+
+                $registry->register($schema->adminClass);
+            }
+
+            return $registry;
+        });
+
+        $this->app->singleton(SchemaFieldRenderer::class, function (): SchemaFieldRenderer {
+            return new SchemaFieldRenderer([
+                'posts_chooser' => app(PostsChooserFieldHandler::class),
+            ]);
         });
     }
 

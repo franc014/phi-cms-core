@@ -12,8 +12,8 @@ it('does not reference the legacy content blocks config key', function () {
         ->and($source)->not->toContain("config('phi-cms-core.content_blocks',");
 });
 
-it('uses the schema registry in register content blocks', function () {
-    $source = file_get_contents(__DIR__ . '/../src/PhiCmsCorePlugin.php');
+it('populates content blocks from the schema registry in the service provider', function () {
+    $source = file_get_contents(__DIR__ . '/../src/PhiCmsCoreServiceProvider.php');
 
     expect($source)->toContain(SchemaRegistry::class)
         ->and($source)->toContain('->all()');
