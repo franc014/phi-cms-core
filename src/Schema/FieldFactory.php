@@ -4,6 +4,7 @@ namespace JFA\PhiCmsCore\Schema;
 
 use InvalidArgumentException;
 use JFA\PhiCmsCore\Schema\Fields\CustomField;
+use JFA\PhiCmsCore\Schema\Fields\ImageField;
 use JFA\PhiCmsCore\Schema\Fields\RepeaterField;
 use JFA\PhiCmsCore\Schema\Fields\RichField;
 use JFA\PhiCmsCore\Schema\Fields\SelectField;
@@ -62,11 +63,17 @@ final readonly class FieldFactory
                 labelField: $config['label_field'] ?? null,
                 fields: $this->makeFields($config['fields'] ?? []),
             ),
+            'image' => new ImageField(
+                name: $name,
+                required: (bool) ($config['required'] ?? false),
+                label: $config['label']
+            ),
             'posts_chooser', 'custom' => new CustomField(
                 name: $name,
                 handler: $config['handler'] ?? $type,
                 config: $config['config'] ?? [],
             ),
+
             default => throw new InvalidArgumentException("Unsupported field type [{$type}] for field [{$name}]."),
         };
     }

@@ -2,14 +2,17 @@
 
 namespace JFA\PhiCmsCore\Schema;
 
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\Select;
+
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Component;
 use InvalidArgumentException;
 use JFA\PhiCmsCore\Schema\Fields\CustomField;
+use JFA\PhiCmsCore\Schema\Fields\ImageField;
 use JFA\PhiCmsCore\Schema\Fields\RepeaterField;
 use JFA\PhiCmsCore\Schema\Fields\RichField;
 use JFA\PhiCmsCore\Schema\Fields\SelectField;
@@ -32,6 +35,7 @@ final readonly class SchemaFieldRenderer
             $field instanceof RichField => $this->renderRich($field),
             $field instanceof RepeaterField => $this->renderRepeater($field),
             $field instanceof CustomField => $this->renderCustom($field),
+            $field instanceof ImageField => $this->renderImage($field),
             default => throw new InvalidArgumentException('Unsupported field type [' . get_class($field) . '].'),
         };
     }
@@ -85,7 +89,7 @@ final readonly class SchemaFieldRenderer
     private function renderSelect(SelectField $field): Select
     {
         $select = Select::make($field->name)
-            ->options(array_map(fn (string $label): string => __($label), $field->options));
+            ->options(array_map(fn(string $label): string => __($label), $field->options));
 
         if ($field->label !== null) {
             $select->label(__($field->label));
@@ -129,11 +133,27 @@ final readonly class SchemaFieldRenderer
         return $editor;
     }
 
+    private function renderImage(ImageField $field): FileUpload
+    {
+        $imageUploader = FileUpload::make($field->name);
+
+
+        if ($field->label !== null) {
+            $imageUploader->label(__($field->label));
+        }
+
+        if ($field->required) {
+            $imageUploader->required();
+        }
+
+        return $imageUploader;
+    }
+
     private function renderRepeater(RepeaterField $field): Repeater
     {
         $repeater = Repeater::make($field->name)
             ->schema(array_map(
-                fn (Field $child) => $this->render($child),
+                fn(Field $child) => $this->render($child),
                 $field->fields
             ));
 
@@ -144,7 +164,7 @@ final readonly class SchemaFieldRenderer
         if ($field->labelField !== null) {
             $labelField = $field->labelField;
 
-            $repeater->itemLabel(fn (array $state): ?string => $state[$labelField] ?? null);
+            $repeater->itemLabel(fn(array $state): ?string => $state[$labelField] ?? null);
         }
 
         if ($field->min !== null) {
