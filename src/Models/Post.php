@@ -4,6 +4,7 @@ namespace JFA\PhiCmsCore\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Spatie\Tags\HasTags;
 
 class Post extends Model
@@ -13,7 +14,6 @@ class Post extends Model
     protected function casts(): array
     {
         return [
-            'metatags' => 'array',
             'content' => 'array',
         ];
     }
@@ -21,6 +21,11 @@ class Post extends Model
     public function categories(): BelongsToMany
     {
         return $this->belongsToMany(Category::class);
+    }
+
+    public function metatags(): MorphOne
+    {
+        return $this->morphOne(Metatags::class, 'metatable');
     }
 
     public function scopePublished($query)

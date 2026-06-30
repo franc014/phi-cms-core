@@ -6,6 +6,7 @@ use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
+use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Schema\FieldFactory;
 use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
@@ -155,7 +156,9 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
      */
     protected function getCommands(): array
     {
-        return [];
+        return [
+            GenerateBlocksCommand::class,
+        ];
     }
 
     /**

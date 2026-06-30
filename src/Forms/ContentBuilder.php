@@ -8,7 +8,7 @@ use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 
 class ContentBuilder
 {
-    public static function make(): Builder
+    public static function make(bool $addable = true): Builder
     {
         $registry = app(ContentBlockRegistry::class);
 
@@ -21,6 +21,7 @@ class ContentBuilder
             ->collapsed()
             ->cloneable()
             ->required()
+            ->addable($addable)
             ->blocks($registry->getAll());
     }
 }

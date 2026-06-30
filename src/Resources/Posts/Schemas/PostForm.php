@@ -31,11 +31,9 @@ class PostForm
                         DateTimePicker::make('published_at')
                             ->label(__('phi-cms-core::phi-cms-core.published_at')),
                     ])->collapsible()->collapsed(),
-                Section::make(__('phi-cms-core::phi-cms-core.seo'))
-                    ->schema([
-                        self::metatagsField()
-                            ->columnSpanFull(),
-                    ])->collapsible()->collapsed(),
+                self::metatagsField()
+                    ->collapsible()
+                    ->collapsed(),
                 Section::make(__('phi-cms-core::phi-cms-core.content'))
                     ->schema([
                         ContentEditor::make('content')

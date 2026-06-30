@@ -62,14 +62,10 @@ class PageForm
                             ->noSearchResultsMessage(__('phi-cms-core::phi-cms-core.no_sections_found')),
                     ]),
 
-                Section::make(__('phi-cms-core::phi-cms-core.metatags'))
+                self::metatagsField()
                     ->collapsible()
                     ->columnSpan(4)
-                    ->icon(Heroicon::OutlinedTag)
-                    ->schema([
-                        self::metatagsField()
-                            ->columnSpanFull(),
-                    ]),
+                    ->icon(Heroicon::OutlinedTag),
             ]);
     }
 }

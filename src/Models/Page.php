@@ -5,6 +5,7 @@ namespace JFA\PhiCmsCore\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Support\Facades\Cache;
 use JFA\PhiCmsCore\Enums\PageStatus;
 
@@ -18,7 +19,6 @@ class Page extends Model
             'id' => 'integer',
             'published_at' => 'datetime',
             'status' => PageStatus::class,
-            'metatags' => 'array',
         ];
     }
 
@@ -41,6 +41,11 @@ class Page extends Model
         return $this->belongsToMany(Section::class)
             ->using(PageSection::class)
             ->withPivot('order_column');
+    }
+
+    public function metatags(): MorphOne
+    {
+        return $this->morphOne(Metatags::class, 'metatable');
     }
 
     public function hasSections(): bool

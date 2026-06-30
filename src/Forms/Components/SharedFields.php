@@ -2,34 +2,74 @@
 
 namespace JFA\PhiCmsCore\Forms\Components;
 
-use Filament\Forms\Components\KeyValue;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\Fieldset;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Utilities\Set;
 use Illuminate\Support\Str;
 
 trait SharedFields
 {
-    public static function metatagsField(): KeyValue
+    public static function metatagsField(): Section
     {
-        return KeyValue::make('metatags')
-            ->label(__('phi-cms-core::phi-cms-core.metatags'))
-            ->keyLabel(__('phi-cms-core::phi-cms-core.meta_tag'))
-            ->addActionLabel(__('phi-cms-core::phi-cms-core.add_meta_tag'))
-            ->required()
-            ->keyPlaceholder(__('phi-cms-core::phi-cms-core.meta_tag'))
-            ->valuePlaceholder(__('phi-cms-core::phi-cms-core.meta_tag_value'))
-            ->default([
-                'og_title' => '',
-                'og_description' => '',
-                'og_image' => '',
-                'twitter_card' => 'summary_large_image',
-                'twitter_title' => '',
-                'twitter_description' => '',
-                'twitter_image' => '',
-                'robots' => 'index,follow',
+        return Section::make(__('phi-cms-core::phi-cms-core.metatags'))
+            ->relationship('metatags')
+            ->schema([
+                TextInput::make('title')
+                    ->label(__('phi-cms-core::phi-cms-core.title'))
+                    ->maxLength(100),
+                Textarea::make('description')
+                    ->label(__('phi-cms-core::phi-cms-core.description'))
+                    ->rows(3),
+                Fieldset::make('Open Graph')
+                    ->schema([
+                        TextInput::make('og_title')
+                            ->label(__('phi-cms-core::phi-cms-core.og_title'))
+                            ->maxLength(100),
+                        Textarea::make('og_description')
+                            ->label(__('phi-cms-core::phi-cms-core.og_description'))
+                            ->rows(2),
+                        FileUpload::make('og_image')
+                            ->label(__('phi-cms-core::phi-cms-core.og_image'))
+                            ->image()
+                            ->directory('metatags')
+                            ->visibility('public'),
+                    ]),
+                Fieldset::make('Twitter')
+                    ->schema([
+                        TextInput::make('twitter_title')
+                            ->label(__('phi-cms-core::phi-cms-core.twitter_title'))
+                            ->maxLength(100),
+                        Select::make('twitter_card')
+                            ->label(__('phi-cms-core::phi-cms-core.twitter_card'))
+                            ->options([
+                                'summary' => 'Summary',
+                                'summary_large_image' => 'Summary Large Image',
+                            ])
+                            ->default('summary_large_image'),
+                        Textarea::make('twitter_description')
+                            ->label(__('phi-cms-core::phi-cms-core.twitter_description'))
+                            ->rows(2),
+                        FileUpload::make('twitter_image')
+                            ->label(__('phi-cms-core::phi-cms-core.twitter_image'))
+                            ->image()
+                            ->directory('metatags')
+                            ->visibility('public'),
+                    ]),
+                Select::make('robots')
+                    ->label(__('phi-cms-core::phi-cms-core.robots'))
+                    ->options([
+                        'index,follow' => 'Index, Follow',
+                        'noindex,follow' => 'No Index, Follow',
+                        'index,nofollow' => 'Index, No Follow',
+                        'noindex,nofollow' => 'No Index, No Follow',
+                    ])
+                    ->default('index,follow'),
             ]);
     }
 
