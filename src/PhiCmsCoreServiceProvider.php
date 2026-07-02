@@ -51,7 +51,29 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                     })
                     ->publishMigrations()
                     ->publish('settings-migrations')
-                    ->askToRunMigrations();
+                    ->askToRunMigrations()
+                    ->endWith(function (InstallCommand $command) {
+                        if (! $command->confirm('Would you like to seed Shield roles and default users?', false)) {
+                            return;
+                        }
+
+                        $command->call('vendor:publish', [
+                            '--tag' => 'phi-cms-seed-config',
+                            '--force' => true,
+                        ]);
+
+                        $command->call('db:seed', [
+                            '--class' => 'JFA\PhiCmsCore\Database\Seeders\ShieldRoleSeeder',
+                            '--force' => true,
+                        ]);
+
+                        $command->call('db:seed', [
+                            '--class' => 'JFA\PhiCmsCore\Database\Seeders\ShieldUserSeeder',
+                            '--force' => true,
+                        ]);
+
+                        $command->info('Shield roles and users seeded successfully.');
+                    });
             });
 
         if (file_exists($package->basePath('/../config/phi-cms-schema.php'))) {
@@ -121,6 +143,13 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                 $this->package->basePath('/../config/phi-cms-schema.php') => config_path('phi-cms-schema.php'),
             ], 'phi-cms-schema-config');
 
+            $seedConfigPath = $this->package->basePath('/../config/phi-cms-seed.php');
+            if (file_exists($seedConfigPath)) {
+                $this->publishes([
+                    $seedConfigPath => config_path('phi-cms-seed.php'),
+                ], 'phi-cms-seed-config');
+            }
+
             foreach (app(Filesystem::class)->files(__DIR__ . '/../stubs/') as $file) {
                 $this->publishes([
                     $file->getRealPath() => base_path("stubs/phi-cms-core/{$file->getFilename()}"),
@@ -132,6 +161,13 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                 $this->publishes([
                     $settingsPath => database_path('settings'),
                 ], 'phi-cms-core-settings-migrations');
+            }
+
+            $seedersPath = __DIR__ . '/../database/seeders';
+            if (is_dir($seedersPath)) {
+                $this->publishes([
+                    $seedersPath => database_path('seeders'),
+                ], 'phi-cms-core-seeders');
             }
         }
 

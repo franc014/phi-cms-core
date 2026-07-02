@@ -52,7 +52,8 @@
     "autoload": {
         "psr-4": {
             "JFA\\PhiCmsCore\\": "src/",
-            "JFA\\PhiCmsCore\\Database\\Factories\\": "database/factories/"
+            "JFA\\PhiCmsCore\\Database\\Factories\\": "database/factories/",
+            "JFA\\PhiCmsCore\\Database\\Seeders\\": "database/seeders/"
         }
     },
     "autoload-dev": {
