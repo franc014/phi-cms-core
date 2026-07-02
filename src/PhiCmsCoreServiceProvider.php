@@ -191,6 +191,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     protected function getMigrations(): array
     {
         return [
+            'create_metatags_table',
             'create_sections_table',
             'create_pages_table',
             'create_page_section_table',

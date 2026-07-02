@@ -13,7 +13,6 @@ return new class extends Migration {
             $table->text('excerpt');
             $table->string('slug');
             $table->json('content');
-            $table->json('metatags');
             $table->dateTime('published_at')->nullable();
             $table->timestamps();
         });

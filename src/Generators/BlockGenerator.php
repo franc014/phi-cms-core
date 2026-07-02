@@ -21,7 +21,7 @@ final class BlockGenerator
      * @param  array<string, array<string, mixed>>  $config
      * @return array{generated: array<int, string>, skipped: array<int, string>, protected: array<int, string>}
      */
-    public function generate(array $config, string $basePath, string $rootNamespace, bool $force = false, bool $all = false): array
+    public function generate(array $config, string $basePath, string $rootNamespace, bool $force = false, bool $all = false, bool $dryRun = false): array
     {
         $registry = SchemaRegistry::fromConfig($config, new FieldFactory);
 
@@ -32,7 +32,7 @@ final class BlockGenerator
         ];
 
         foreach ($registry->all() as $schema) {
-            $result = $this->mergeResult($result, $this->generateSchema($schema, $basePath, $rootNamespace, $force, $all));
+            $result = $this->mergeResult($result, $this->generateSchema($schema, $basePath, $rootNamespace, $force, $all, $dryRun));
         }
 
         return $result;
@@ -41,7 +41,7 @@ final class BlockGenerator
     /**
      * @return array{generated: array<int, string>, skipped: array<int, string>, protected: array<int, string>}
      */
-    private function generateSchema($schema, string $basePath, string $rootNamespace, bool $force, bool $all): array
+    private function generateSchema($schema, string $basePath, string $rootNamespace, bool $force, bool $all, bool $dryRun): array
     {
         $result = [
             'generated' => [],
@@ -57,6 +57,7 @@ final class BlockGenerator
                     $this->adminGenerator->generate($schema),
                     $force,
                     $all,
+                    $dryRun,
                 ),
             );
         }
@@ -70,6 +71,7 @@ final class BlockGenerator
                         $code,
                         $force,
                         $all,
+                        $dryRun,
                     ),
                 );
             }
@@ -93,11 +95,13 @@ final class BlockGenerator
     /**
      * @return array{generated: array<int, string>, skipped: array<int, string>, protected: array<int, string>}
      */
-    private function writeGeneratedClass(string $path, string $code, bool $force, bool $all): array
+    private function writeGeneratedClass(string $path, string $code, bool $force, bool $all, bool $dryRun): array
     {
         if (! $this->files->exists($path)) {
-            $this->files->ensureDirectoryExists(dirname($path));
-            $this->files->put($path, $code);
+            if (! $dryRun) {
+                $this->files->ensureDirectoryExists(dirname($path));
+                $this->files->put($path, $code);
+            }
 
             return [
                 'generated' => [$path],
@@ -122,7 +126,9 @@ final class BlockGenerator
             ];
         }
 
-        $this->files->put($path, $code);
+        if (! $dryRun) {
+            $this->files->put($path, $code);
+        }
 
         return [
             'generated' => [$path],

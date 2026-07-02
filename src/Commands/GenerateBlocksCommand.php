@@ -10,6 +10,7 @@ class GenerateBlocksCommand extends Command
     protected $signature = 'phi-cms:generate-blocks
         {--force : Overwrite generated files}
         {--all : Overwrite all files including handwritten ones (requires --force)}
+        {--dry-run : Preview what would be generated without writing files}
         {--no-pint : Skip Pint formatting on generated files}';
 
     protected $description = 'Generate host block scaffolding from the schema';
@@ -28,19 +29,22 @@ class GenerateBlocksCommand extends Command
             return self::SUCCESS;
         }
 
+        $dryRun = $this->option('dry-run');
+
         $result = $generator->generate(
             config('phi-cms-schema.blocks', []),
             base_path(),
             app()->getNamespace(),
             (bool) $this->option('force'),
             (bool) $this->option('all'),
+            $dryRun,
         );
 
-        if ($result['generated'] !== [] && ! $this->option('no-pint')) {
+        if ($result['generated'] !== [] && ! $this->option('no-pint') && ! $dryRun) {
             $this->runPint($result['generated']);
         }
 
-        $this->displayResults($result);
+        $this->displayResults($result, $dryRun);
 
         return self::SUCCESS;
     }
@@ -64,9 +68,14 @@ class GenerateBlocksCommand extends Command
     /**
      * @param  array{generated: array<int, string>, skipped: array<int, string>, protected: array<int, string>}  $result
      */
-    private function displayResults(array $result): void
+    private function displayResults(array $result, bool $dryRun = false): void
     {
         $this->newLine();
+
+        if ($dryRun) {
+            $this->components->warn('DRY RUN — no files were written.');
+            $this->newLine();
+        }
 
         if ($result['generated'] !== []) {
             $this->components->info('Generated files:');
