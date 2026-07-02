@@ -6,7 +6,6 @@ use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\Select;
-
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Component;
@@ -89,7 +88,7 @@ final readonly class SchemaFieldRenderer
     private function renderSelect(SelectField $field): Select
     {
         $select = Select::make($field->name)
-            ->options(array_map(fn(string $label): string => __($label), $field->options));
+            ->options(array_map(fn (string $label): string => __($label), $field->options));
 
         if ($field->label !== null) {
             $select->label(__($field->label));
@@ -137,7 +136,6 @@ final readonly class SchemaFieldRenderer
     {
         $imageUploader = FileUpload::make($field->name);
 
-
         if ($field->label !== null) {
             $imageUploader->label(__($field->label));
         }
@@ -153,7 +151,7 @@ final readonly class SchemaFieldRenderer
     {
         $repeater = Repeater::make($field->name)
             ->schema(array_map(
-                fn(Field $child) => $this->render($child),
+                fn (Field $child) => $this->render($child),
                 $field->fields
             ));
 
@@ -164,7 +162,7 @@ final readonly class SchemaFieldRenderer
         if ($field->labelField !== null) {
             $labelField = $field->labelField;
 
-            $repeater->itemLabel(fn(array $state): ?string => $state[$labelField] ?? null);
+            $repeater->itemLabel(fn (array $state): ?string => $state[$labelField] ?? null);
         }
 
         if ($field->min !== null) {
