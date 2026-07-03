@@ -53,26 +53,32 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                     ->publish('settings-migrations')
                     ->askToRunMigrations()
                     ->endWith(function (InstallCommand $command) {
-                        if (! $command->confirm('Would you like to seed Shield roles and default users?', false)) {
-                            return;
+                        if ($command->confirm('Would you like to seed Shield roles and default users?', false)) {
+                            $command->call('vendor:publish', [
+                                '--tag' => 'phi-cms-seed-config',
+                                '--force' => true,
+                            ]);
+
+                            $command->call('db:seed', [
+                                '--class' => 'JFA\PhiCmsCore\Database\Seeders\ShieldRoleSeeder',
+                                '--force' => true,
+                            ]);
+
+                            $command->call('db:seed', [
+                                '--class' => 'JFA\PhiCmsCore\Database\Seeders\ShieldUserSeeder',
+                                '--force' => true,
+                            ]);
+
+                            $command->info('Shield roles and users seeded successfully.');
                         }
 
-                        $command->call('vendor:publish', [
-                            '--tag' => 'phi-cms-seed-config',
-                            '--force' => true,
-                        ]);
-
-                        $command->call('db:seed', [
-                            '--class' => 'JFA\PhiCmsCore\Database\Seeders\ShieldRoleSeeder',
-                            '--force' => true,
-                        ]);
-
-                        $command->call('db:seed', [
-                            '--class' => 'JFA\PhiCmsCore\Database\Seeders\ShieldUserSeeder',
-                            '--force' => true,
-                        ]);
-
-                        $command->info('Shield roles and users seeded successfully.');
+                        if ($command->confirm('Would you like to set up the Filament admin panel?', true)) {
+                            $command->call('filament:install', [
+                                '--panels' => true,
+                                '--force' => true,
+                                '--no-interaction' => true,
+                            ]);
+                        }
                     });
             });
 
