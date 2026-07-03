@@ -162,13 +162,6 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                     $settingsPath => database_path('settings'),
                 ], 'phi-cms-core-settings-migrations');
             }
-
-            $seedersPath = __DIR__ . '/../database/seeders';
-            if (is_dir($seedersPath)) {
-                $this->publishes([
-                    $seedersPath => database_path('seeders'),
-                ], 'phi-cms-core-seeders');
-            }
         }
 
         Testable::mixin(new TestsPhiCmsCore);
