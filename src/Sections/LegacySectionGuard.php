@@ -10,8 +10,40 @@ final class LegacySectionGuard
 {
     public static function edit(Section $record): void
     {
-        if ($record->fresh()?->content_version !== null) {
+        $current = $record->exists ? $record->fresh() : $record;
+
+        if ($current?->content_version !== null) {
             throw ValidationException::withMessages(['content' => 'Use the Services draft editor. Legacy content, metadata, status and media mutations are disabled.']);
+        }
+    }
+
+    public static function registerConversions(Section $section, ?Media $media = null): void
+    {
+        if ($media !== null) {
+            self::conversion($media);
+
+            if ($media->exists || $media->model !== null) {
+                return;
+            }
+        }
+
+        self::assertConversionsAllowed($section);
+    }
+
+    public static function conversion(Media $media, bool $lockOwner = false): void
+    {
+        $current = $media->exists
+            ? $media->newQuery()->with('model')->find($media->getKey())
+            : $media;
+
+        if ($current?->model instanceof Section) {
+            $owner = $lockOwner
+                ? Section::query()->lockForUpdate()->find($current->model->getKey())
+                : $current->model;
+
+            if ($owner !== null) {
+                self::assertConversionsAllowed($owner);
+            }
         }
     }
 
@@ -19,15 +51,39 @@ final class LegacySectionGuard
     {
         $owners = [[$media->model_type, $media->model_id], [$media->getRawOriginal('model_type'), $media->getRawOriginal('model_id')]];
         foreach ($owners as [$type, $id]) {
-            if ($type === (new Section)->getMorphClass() && $id !== null) {
-                $section = Section::find((int) $id);
-                if ($section !== null) {
-                    if ($section->draft_content !== null || $section->published_content !== null) {
-                        throw ValidationException::withMessages(['media' => 'Section media is adoption/recovery-protected. Legacy media mutations are disabled.']);
-                    }
-                    self::edit($section);
-                }
+            $section = self::sectionForOwner($type, $id);
+            if ($section !== null) {
+                self::assertMediaMutationAllowed($section);
             }
         }
+    }
+
+    private static function assertConversionsAllowed(Section $section): void
+    {
+        $current = $section->exists ? $section->fresh() : $section;
+
+        if ($current?->content_version !== null || $current?->draft_content !== null || $current?->published_content !== null) {
+            throw ValidationException::withMessages(['media' => 'Adopted and recovery-protected Section conversions cannot be regenerated through legacy paths.']);
+        }
+    }
+
+    private static function assertMediaMutationAllowed(Section $section): void
+    {
+        $current = $section->exists ? $section->fresh() : $section;
+
+        if ($current?->draft_content !== null || $current?->published_content !== null) {
+            throw ValidationException::withMessages(['media' => 'Section media is adoption/recovery-protected. Legacy media mutations are disabled.']);
+        }
+
+        self::edit($current);
+    }
+
+    private static function sectionForOwner(mixed $type, mixed $id): ?Section
+    {
+        if ($type !== (new Section)->getMorphClass() || $id === null) {
+            return null;
+        }
+
+        return Section::query()->find((int) $id);
     }
 }

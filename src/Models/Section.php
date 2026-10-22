@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -24,6 +25,8 @@ class Section extends ContentModel
 {
     use HasFactory;
     use LogsActivity;
+
+    public bool $registerMediaConversionsUsingModelInstance = true;
 
     protected $hidden = ['draft_content', 'published_content'];
 
@@ -75,10 +78,7 @@ class Section extends ContentModel
 
     public function registerAllMediaConversions(?Media $media = null): void
     {
-        $current = $this->exists ? $this->fresh() : $this;
-        if ($current?->content_version !== null || $current?->draft_content !== null || $current?->published_content !== null) {
-            throw ValidationException::withMessages(['media' => 'Adopted and recovery-protected Section conversions cannot be regenerated through legacy paths.']);
-        }
+        LegacySectionGuard::registerConversions($this, $media);
 
         parent::registerAllMediaConversions($media);
     }

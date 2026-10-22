@@ -6,6 +6,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\SectionStatus;
 use JFA\PhiCmsCore\Models\Page;
@@ -103,6 +104,7 @@ final class SectionContent
                 'content_version' => $expectedVersion + 1,
                 'updated_at' => now(),
             ]);
+            $this->logContentAction($fresh, 'draft_saved', 'Section draft saved', $expectedVersion + 1);
             session()->forget($this->reviewKey($fresh));
 
             return $expectedVersion + 1;
@@ -157,6 +159,7 @@ final class SectionContent
                 'content_version' => $expectedVersion + 1,
                 'updated_at' => now(),
             ]);
+            $this->logContentAction($fresh, 'published', 'Section published', $expectedVersion + 1);
 
             return $expectedVersion + 1;
         });
@@ -220,5 +223,22 @@ final class SectionContent
 
             throw $exception;
         }
+    }
+
+    private function logContentAction(Section $section, string $event, string $description, int $version): void
+    {
+        $connection = config('activitylog.database_connection');
+        $table = config('activitylog.table_name', 'activity_log');
+
+        if (! Schema::connection($connection)->hasTable($table)) {
+            return;
+        }
+
+        activity()
+            ->performedOn($section)
+            ->causedBy(auth()->user())
+            ->event($event)
+            ->withProperties(['version' => $version])
+            ->log($description);
     }
 }

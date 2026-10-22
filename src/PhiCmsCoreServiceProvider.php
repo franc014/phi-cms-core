@@ -17,6 +17,8 @@ use JFA\PhiCmsCore\Schema\FieldFactory;
 use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
 use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
 use JFA\PhiCmsCore\Schema\SchemaRegistry;
+use JFA\PhiCmsCore\Sections\GuardedFileManipulator;
+use JFA\PhiCmsCore\Sections\GuardedResponsiveImageGenerator;
 use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use JFA\PhiCmsCore\Sections\SectionRenderer;
@@ -27,7 +29,9 @@ use Livewire\Livewire;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
+use Spatie\MediaLibrary\Conversions\FileManipulator;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Spatie\MediaLibrary\ResponsiveImages\ResponsiveImageGenerator;
 
 class PhiCmsCoreServiceProvider extends PackageServiceProvider
 {
@@ -113,6 +117,8 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
+        $this->app->bind(FileManipulator::class, GuardedFileManipulator::class);
+        $this->app->bind(ResponsiveImageGenerator::class, GuardedResponsiveImageGenerator::class);
         $this->app->scoped(SectionRenderer::class);
         $this->app->singleton(SectionRegistry::class, fn () => new SectionRegistry(config('phi-cms.sections', [])));
 
