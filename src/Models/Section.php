@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
-use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -25,8 +24,6 @@ class Section extends ContentModel
 {
     use HasFactory;
     use LogsActivity;
-
-    public bool $registerMediaConversionsUsingModelInstance = true;
 
     protected $hidden = ['draft_content', 'published_content'];
 
@@ -62,6 +59,18 @@ class Section extends ContentModel
     public function delete(): ?bool
     {
         return DB::transaction(function (): ?bool {
+            // Adoption and conversion guards lock Media before Sections. Deleting
+            // cascades into Media, so take that same order before locking the row.
+            if ($this->exists) {
+                $mediaClass = config('media-library.media_model', Media::class);
+                $mediaClass::query()
+                    ->where('model_type', $this->getMorphClass())
+                    ->where('model_id', $this->getKey())
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+            }
+
             $current = static::query()->lockForUpdate()->find($this->getKey());
             if ($current === null) {
                 return null;
@@ -74,13 +83,6 @@ class Section extends ContentModel
 
             return parent::delete();
         });
-    }
-
-    public function registerAllMediaConversions(?Media $media = null): void
-    {
-        LegacySectionGuard::registerConversions($this, $media);
-
-        parent::registerAllMediaConversions($media);
     }
 
     protected function casts(): array

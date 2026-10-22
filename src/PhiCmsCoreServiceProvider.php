@@ -8,6 +8,7 @@ use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Blade;
 use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
+use JFA\PhiCmsCore\Commands\GuardedCleanCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
 use JFA\PhiCmsCore\Commands\ServicesCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
@@ -30,6 +31,7 @@ use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 use Spatie\MediaLibrary\Conversions\FileManipulator;
+use Spatie\MediaLibrary\MediaCollections\Commands\CleanCommand;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Spatie\MediaLibrary\ResponsiveImages\ResponsiveImageGenerator;
 
@@ -119,6 +121,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     {
         $this->app->bind(FileManipulator::class, GuardedFileManipulator::class);
         $this->app->bind(ResponsiveImageGenerator::class, GuardedResponsiveImageGenerator::class);
+        $this->app->bind(CleanCommand::class, GuardedCleanCommand::class);
         $this->app->scoped(SectionRenderer::class);
         $this->app->singleton(SectionRegistry::class, fn () => new SectionRegistry(config('phi-cms.sections', [])));
 

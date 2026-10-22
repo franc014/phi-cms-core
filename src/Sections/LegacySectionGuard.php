@@ -17,39 +17,32 @@ final class LegacySectionGuard
         }
     }
 
-    public static function registerConversions(Section $section, ?Media $media = null): void
+    public static function conversion(Media $media): void
     {
-        if ($media !== null) {
-            self::conversion($media);
-
-            if ($media->exists || $media->model !== null) {
-                return;
-            }
-        }
-
-        self::assertConversionsAllowed($section);
-    }
-
-    public static function conversion(Media $media, bool $lockOwner = false): void
-    {
+        // Adoption locks Media before Sections. Take the same order here so a
+        // queued conversion cannot deadlock with an in-flight adoption.
         $current = $media->exists
-            ? $media->newQuery()->with('model')->find($media->getKey())
+            ? $media->newQuery()->with('model')->lockForUpdate()->find($media->getKey())
             : $media;
 
-        if ($current?->model instanceof Section) {
-            $owner = $lockOwner
-                ? Section::query()->lockForUpdate()->find($current->model->getKey())
-                : $current->model;
+        if (! $current?->model instanceof Section) {
+            return;
+        }
 
-            if ($owner !== null) {
-                self::assertConversionsAllowed($owner);
-            }
+        $owner = Section::query()->lockForUpdate()->find($current->model->getKey());
+
+        if ($owner !== null) {
+            self::assertConversionsAllowed($owner);
         }
     }
 
     public static function media(Media $media): void
     {
-        $owners = [[$media->model_type, $media->model_id], [$media->getRawOriginal('model_type'), $media->getRawOriginal('model_id')]];
+        $owners = array_unique([
+            [$media->model_type, $media->model_id],
+            [$media->getRawOriginal('model_type'), $media->getRawOriginal('model_id')],
+        ], SORT_REGULAR);
+
         foreach ($owners as [$type, $id]) {
             $section = self::sectionForOwner($type, $id);
             if ($section !== null) {
@@ -58,13 +51,34 @@ final class LegacySectionGuard
         }
     }
 
+    public static function conversionIsProtected(Media $media): bool
+    {
+        $current = $media->exists
+            ? $media->newQuery()->with('model')->find($media->getKey())
+            : $media;
+
+        $owner = $current?->model;
+
+        if (! $owner instanceof Section) {
+            return false;
+        }
+
+        return self::isProtected($owner->exists ? $owner->fresh() : $owner);
+    }
+
     private static function assertConversionsAllowed(Section $section): void
     {
         $current = $section->exists ? $section->fresh() : $section;
 
-        if ($current?->content_version !== null || $current?->draft_content !== null || $current?->published_content !== null) {
+        if (self::isProtected($current)) {
             throw ValidationException::withMessages(['media' => 'Adopted and recovery-protected Section conversions cannot be regenerated through legacy paths.']);
         }
+    }
+
+    private static function isProtected(?Section $section): bool
+    {
+        return $section !== null
+            && ($section->content_version !== null || $section->draft_content !== null || $section->published_content !== null);
     }
 
     private static function assertMediaMutationAllowed(Section $section): void

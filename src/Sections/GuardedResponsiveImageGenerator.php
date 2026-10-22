@@ -12,7 +12,7 @@ final class GuardedResponsiveImageGenerator extends BaseResponsiveImageGenerator
     public function generateResponsiveImages(Media $media): void
     {
         DB::transaction(function () use ($media): void {
-            LegacySectionGuard::conversion($media, true);
+            LegacySectionGuard::conversion($media);
 
             parent::generateResponsiveImages($media);
         });
@@ -21,7 +21,7 @@ final class GuardedResponsiveImageGenerator extends BaseResponsiveImageGenerator
     public function generateResponsiveImagesForConversion(Media $media, Conversion $conversion, string $baseImage): void
     {
         DB::transaction(function () use ($media, $conversion, $baseImage): void {
-            LegacySectionGuard::conversion($media, true);
+            LegacySectionGuard::conversion($media);
 
             parent::generateResponsiveImagesForConversion($media, $conversion, $baseImage);
         });
