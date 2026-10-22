@@ -11,7 +11,9 @@ use Filament\Actions\ReplicateAction;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Model;
+use JFA\PhiCmsCore\Models\Section;
+use JFA\PhiCmsCore\Resources\Sections\SectionResource;
+use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 
 class SectionsTable
 {
@@ -71,11 +73,21 @@ class SectionsTable
             ->recordActions([
                 ...self::customActions(),
                 ReplicateAction::make()
-                    ->beforeReplicaSaved(function (Model $replica): void {
+                    ->beforeReplicaSaved(function (Section $replica): void {
                         $replica->title = $replica->title . '-Copy';
                         $replica->slug = $replica->slug . '-copy';
                     }),
-                EditAction::make(),
+                EditAction::make()
+                    ->url(fn (Section $record): ?string => $record->content_version !== null ? SectionResource::getUrl('draft', ['record' => $record]) : null)
+                    ->beforeFormFilled(fn (Section $record) => LegacySectionGuard::edit($record))
+                    ->beforeFormValidated(fn (Section $record) => LegacySectionGuard::edit($record)),
+                Action::make('viewDraft')->label(__('phi-cms-core::workflow.review'))
+                    ->visible(function (Section $record): bool {
+                        $actor = auth()->user()?->fresh();
+
+                        return $record->content_version !== null && $actor !== null && $actor->can('viewDraft', $record) && ! $actor->can('update', $record);
+                    })
+                    ->url(fn (Section $record): string => SectionResource::getUrl('draft', ['record' => $record])),
                 DeleteAction::make(),
             ])
             ->toolbarActions([

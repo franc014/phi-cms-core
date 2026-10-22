@@ -6,18 +6,28 @@ use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Blade;
 use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
+use JFA\PhiCmsCore\Commands\ServicesCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
+use JFA\PhiCmsCore\Http\Middleware\PrivatePreviewResponse;
+use JFA\PhiCmsCore\Livewire\Preview;
 use JFA\PhiCmsCore\Schema\FieldFactory;
 use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
 use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
 use JFA\PhiCmsCore\Schema\SchemaRegistry;
+use JFA\PhiCmsCore\Sections\LegacySectionGuard;
+use JFA\PhiCmsCore\Sections\SectionRegistry;
+use JFA\PhiCmsCore\Sections\SectionRenderer;
 use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
+use JFA\PhiCmsCore\View\Components\SectionView;
 use Livewire\Features\SupportTesting\Testable;
+use Livewire\Livewire;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 class PhiCmsCoreServiceProvider extends PackageServiceProvider
 {
@@ -28,6 +38,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     public function configurePackage(Package $package): void
     {
         $package->name(static::$name)
+            ->hasConfigFile('phi-cms')
             ->hasCommands($this->getCommands())
             ->hasInstallCommand(function (InstallCommand $command) {
                 $command
@@ -84,7 +95,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             });
 
         if (file_exists($package->basePath('/../config/phi-cms-schema.php'))) {
-            $package->hasConfigFile('phi-cms-schema');
+            $package->hasConfigFile(['phi-cms', 'phi-cms-schema']);
         }
 
         if (file_exists($package->basePath('/../database/migrations'))) {
@@ -102,6 +113,9 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
+        $this->app->scoped(SectionRenderer::class);
+        $this->app->singleton(SectionRegistry::class, fn () => new SectionRegistry(config('phi-cms.sections', [])));
+
         $this->app->singleton(SchemaRegistry::class, function (): SchemaRegistry {
             return SchemaRegistry::fromConfig(
                 config('phi-cms-schema.blocks', []),
@@ -133,6 +147,13 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
+        Blade::component(SectionView::class, 'phi-cms-core::section');
+        Livewire::component('phi-cms-core.preview', Preview::class);
+        $this->app['router']->pushMiddlewareToGroup('web', PrivatePreviewResponse::class);
+        $mediaClass = config('media-library.media_model', Media::class);
+        $mediaClass::saving([LegacySectionGuard::class, 'media']);
+        $mediaClass::deleting([LegacySectionGuard::class, 'media']);
+
         FilamentAsset::register(
             $this->getAssets(),
             $this->getAssetPackageName()
@@ -195,6 +216,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         return [
             GenerateBlocksCommand::class,
             SeedCommand::class,
+            ServicesCommand::class,
         ];
     }
 
@@ -237,6 +259,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             'create_posts_table',
             'create_categories_table',
             'create_category_post_table',
+            'add_content_snapshots_to_sections_table',
         ];
     }
 }

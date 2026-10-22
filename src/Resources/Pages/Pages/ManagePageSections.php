@@ -9,8 +9,12 @@ use Filament\Resources\Pages\ManageRelatedRecords;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+use JFA\PhiCmsCore\Models\Page;
+use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Resources\Sections\SectionResource;
+use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 
 class ManagePageSections extends ManageRelatedRecords
 {
@@ -36,10 +40,26 @@ class ManagePageSections extends ManageRelatedRecords
                 return $table->getQuery()->count() > 1;
             })
             ->recordActions([
-                EditAction::make(),
+                EditAction::make()
+                    ->url(fn (Section $record): ?string => $record->content_version !== null ? SectionResource::getUrl('draft', ['record' => $record]) : null)
+                    ->beforeFormFilled(fn (Section $record) => LegacySectionGuard::edit($record))
+                    ->beforeFormValidated(fn (Section $record) => LegacySectionGuard::edit($record)),
             ])
             ->headerActions([
                 CreateAction::make(),
             ]);
+    }
+
+    public function reorderTable(array $order, int | string | null $draggedRecordKey = null): void
+    {
+        DB::transaction(function () use ($order, $draggedRecordKey): void {
+            /** @var Page $page */
+            $page = $this->getOwnerRecord();
+            $sections = $page->sections()->orderBy('sections.id')->lockForUpdate()->get();
+            foreach ($sections as $section) {
+                LegacySectionGuard::edit($section);
+            }
+            parent::reorderTable($order, $draggedRecordKey);
+        });
     }
 }

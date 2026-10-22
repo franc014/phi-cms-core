@@ -1,0 +1,224 @@
+<?php
+
+namespace JFA\PhiCmsCore\Sections;
+
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Enums\SectionStatus;
+use JFA\PhiCmsCore\Models\Page;
+use JFA\PhiCmsCore\Models\Section;
+use Throwable;
+
+final class SectionContent
+{
+    public function __construct(private SectionRegistry $registry) {}
+
+    /** @return array<string, mixed> */
+    public function published(Section $section): array
+    {
+        try {
+            $fresh = Section::query()->select(['id', 'type', 'content_version', 'published_content'])->findOrFail((int) $section->getKey());
+
+            return $this->normalizeSnapshot($fresh, $fresh->published_content);
+        } catch (Throwable $exception) {
+            Log::error('Unable to render published Section.', ['section_id' => $section->getKey(), 'exception_type' => $exception::class]);
+            abort(503, 'Content temporarily unavailable.');
+        }
+    }
+
+    /** @return array<int, array{view: string, content: array<string, mixed>}> */
+    public function renderPage(Page $page, bool $preview): array
+    {
+        $freshPage = $preview ? $this->authorizePage($page) : Page::query()->published()->findOrFail((int) $page->getKey());
+        $columns = ['sections.id', 'sections.type', 'content_version', 'published_content'];
+        if ($preview) {
+            request()->attributes->set('phi-cms.private', true);
+            $columns[] = 'draft_content';
+        }
+        $sections = $freshPage->sections()->where('sections.status', SectionStatus::ACTIVE)
+            ->whereNotNull('content_version')->select($columns)->orderByPivot('order_column')->get();
+        $actor = $preview ? auth()->user()?->fresh() : null;
+        $rendered = [];
+        foreach ($sections as $section) {
+            if (isset($rendered[$section->id])) {
+                continue;
+            }
+            if ($preview) {
+                abort_if($actor === null, 403);
+                Gate::forUser($actor)->authorize('viewDraft', $section);
+            }
+            $snapshot = $preview ? $section->draft_content : $section->published_content;
+            $rendered[$section->id] = ['view' => $this->registry->get($section->type)::view(), 'content' => $this->normalizeSnapshot($section, $snapshot)];
+        }
+
+        return $rendered;
+    }
+
+    /** @return array<string, mixed> */
+    public function preview(Page $page, Section $section): array
+    {
+        $this->authorizePage($page);
+        abort_unless($page->sections()->whereKey($section->getKey())->exists(), 403);
+
+        return $this->draft($section);
+    }
+
+    /** @return array<string, mixed> */
+    public function draft(Section $section): array
+    {
+        request()->attributes->set('phi-cms.private', true);
+        $this->ensureEditingEnabled();
+        $fresh = Section::query()->findOrFail((int) $section->getKey());
+        $this->authorize('viewDraft', $fresh);
+
+        return $this->normalizeSnapshot($fresh, $fresh->draft_content);
+    }
+
+    public function authorizePage(Page $page): Page
+    {
+        $this->ensureEditingEnabled();
+        $fresh = Page::query()->published()->findOrFail($page->getKey());
+        $this->authorize('preview', $fresh);
+
+        return $fresh;
+    }
+
+    /** @param array<string, mixed> $content */
+    public function saveDraft(Section $section, array $content, int $expectedVersion): int
+    {
+        $this->ensureEditingEnabled();
+
+        $version = $this->transaction(function () use ($section, $content, $expectedVersion): int {
+            $fresh = Section::query()->lockForUpdate()->findOrFail((int) $section->getKey());
+            $this->authorize('viewDraft', $fresh);
+            $this->authorize('update', $fresh);
+            $this->checkVersion($fresh, $expectedVersion);
+            $normalized = $this->registry->get($fresh->type)::normalize($content);
+
+            DB::table($fresh->getTable())->where('id', $fresh->id)->update([
+                'draft_content' => json_encode($normalized, JSON_THROW_ON_ERROR),
+                'content_version' => $expectedVersion + 1,
+                'updated_at' => now(),
+            ]);
+            session()->forget($this->reviewKey($fresh));
+
+            return $expectedVersion + 1;
+        });
+        app(SectionRenderer::class)->forget();
+
+        return $version;
+    }
+
+    /** @return array{version: int, content: array<string, mixed>, usages: array<int, array<string, mixed>>} */
+    public function review(Section $section, int $expectedVersion): array
+    {
+        $this->ensureEditingEnabled();
+
+        return $this->transaction(function () use ($section, $expectedVersion): array {
+            $fresh = Section::query()->lockForUpdate()->findOrFail((int) $section->getKey());
+            $this->authorize('viewDraft', $fresh);
+            $this->authorize('publish', $fresh);
+            $this->checkVersion($fresh, $expectedVersion);
+            $content = $this->normalizeSnapshot($fresh, $fresh->draft_content);
+            $usages = $this->usages($fresh);
+            session()->put($this->reviewKey($fresh), [
+                'actor' => (string) auth()->id(),
+                'version' => $expectedVersion,
+                'fingerprint' => hash('sha256', json_encode([$content, $usages], JSON_THROW_ON_ERROR)),
+            ]);
+
+            return ['version' => $expectedVersion, 'content' => $content, 'usages' => $usages];
+        });
+    }
+
+    public function publish(Section $section, int $expectedVersion): int
+    {
+        $this->ensureEditingEnabled();
+
+        $version = $this->transaction(function () use ($section, $expectedVersion): int {
+            $fresh = Section::query()->lockForUpdate()->findOrFail((int) $section->getKey());
+            $this->authorize('viewDraft', $fresh);
+            $this->authorize('publish', $fresh);
+            $this->checkVersion($fresh, $expectedVersion);
+            $content = $this->normalizeSnapshot($fresh, $fresh->draft_content);
+            $usages = $this->usages($fresh);
+            $review = session()->get($this->reviewKey($fresh));
+
+            if (! is_array($review) || $review['actor'] !== (string) auth()->id() || $review['version'] !== $expectedVersion
+                || ! hash_equals($review['fingerprint'], hash('sha256', json_encode([$content, $usages], JSON_THROW_ON_ERROR)))) {
+                throw new SectionConflict;
+            }
+
+            DB::table($fresh->getTable())->where('id', $fresh->id)->update([
+                'published_content' => json_encode($content, JSON_THROW_ON_ERROR),
+                'content_version' => $expectedVersion + 1,
+                'updated_at' => now(),
+            ]);
+
+            return $expectedVersion + 1;
+        });
+        session()->forget($this->reviewKey($section));
+        app(SectionRenderer::class)->forget();
+
+        return $version;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function usages(Section $section): array
+    {
+        return DB::table('page_section')->join('pages', 'pages.id', '=', 'page_section.page_id')
+            ->where('section_id', $section->id)->orderBy('pages.id')->orderBy('order_column')
+            ->select(['pages.id', 'pages.title', 'pages.slug', 'pages.status', 'pages.published_at', 'page_section.order_column'])
+            ->get()->map(fn (object $usage): array => (array) $usage)->all();
+    }
+
+    private function checkVersion(Section $section, int $expectedVersion): void
+    {
+        if ($section->content_version === null || $section->content_version !== $expectedVersion) {
+            throw new SectionConflict;
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function normalizeSnapshot(Section $section, mixed $content): array
+    {
+        if ($section->content_version === null || ! is_array($content)) {
+            throw ValidationException::withMessages(['content' => "Section {$section->id} ({$section->type}) has no valid adopted snapshot."]);
+        }
+
+        return $this->registry->get($section->type)::normalize($content);
+    }
+
+    public function authorize(string $ability, Page | Section $record): void
+    {
+        $actor = auth()->user()?->fresh();
+        abort_if($actor === null, 403);
+        Gate::forUser($actor)->authorize($ability, $record);
+    }
+
+    private function ensureEditingEnabled(): void
+    {
+        abort_unless(config('phi-cms.editing', false), 403);
+    }
+
+    private function reviewKey(Section $section): string
+    {
+        return 'phi-cms.reviews.sections.' . $section->getKey();
+    }
+
+    private function transaction(\Closure $operation): mixed
+    {
+        try {
+            return DB::transaction($operation);
+        } catch (QueryException $exception) {
+            if (in_array((string) $exception->getCode(), ['40001', '40P01', '23505', '55P03'], true)) {
+                throw new SectionConflict;
+            }
+
+            throw $exception;
+        }
+    }
+}

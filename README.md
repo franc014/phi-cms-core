@@ -7,6 +7,16 @@
 
 A Filament v5 plugin that provides a complete CMS layer with pages, sections, posts, categories, menus, and company settings — built on Spatie packages.
 
+## Definition-backed Sections (Services slice)
+
+Core now owns `Sections\SectionDefinition`, `SectionRegistry`, `SectionContent`, the `<x-phi-cms-core::section>` Blade wrapper and `phi-cms-core.preview` native form workspace. This path requires neither Presenter nor Visual providers. Existing legacy consumers still require their legacy packages and coordinated adopted-record rejection guards.
+
+Define a stable key, Blade view, native `fields()` and canonical `normalize(array): array`; register the class once under `phi-cms.sections`. Blade receives plain keyed `$content`. Publishing is a separate, versioned, reviewed operation consuming a persisted draft. Hosts own routes, templates, policies and deliberate grants (`preview`, `viewDraft`, `update`, `publish`); editor activation grants no authority.
+
+`phi-cms.editing` defaults false. Public rendering works with it disabled. Publish the additive `add_content_snapshots_to_sections_table` migration alongside the existing migrations; registration/migration alone adopts nothing. `content_version = null` remains legacy. Services-only inventory/apply/rollback and public-capture comparison are available through `php artisan phi-cms:services --help`. They deliberately refuse lossy conversion and destructive schema rollback. Do not remove frozen source envelopes, recovery snapshots or required guards.
+
+The demo's detailed integration/adoption/rollback and verification record is [`docs/services-workflow.md`](https://github.com/franc014/phi-cms-test/blob/ticket-33/docs/services-workflow.md). The Services slice freezes old composition and ancillary editors for adopted Sections; it does not implement Page drafts/creation or arbitrary native upload/relationship/rich-text normalization. Apply only under a verified writer freeze, retain a restore-tested backup, compare actual public output, and complete browser acceptance before enabling edits. Raw SQL/filesystem mutations remain trusted operator responsibilities.
+
 ## Requirements
 
 - PHP 8.3+

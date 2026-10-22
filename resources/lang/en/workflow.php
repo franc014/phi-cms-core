@@ -1,0 +1,25 @@
+<?php
+
+return [
+    'preview' => 'Saved-draft preview',
+    'preview_help' => 'Only adopted Services content is isolated. Other sections are current/live and read-only here.',
+    'canvas' => 'Page preview',
+    'editor' => 'Section editor',
+    'select' => 'Select :title',
+    'select_help' => 'Select a Services section to open its form.',
+    'save' => 'Save draft',
+    'reload' => 'Reload latest',
+    'reload_confirm' => 'Discard entered values and load the latest saved draft?',
+    'review' => 'Review affected usages',
+    'publish' => 'Publish section',
+    'affected' => 'Affected page usages',
+    'live' => 'Live placement',
+    'not_public' => 'Not public — this page will remain unavailable',
+    'review_help' => 'Publication uses the saved draft shown in the form, not unsaved changes. Every existing live usage updates without republishing its page.',
+    'unsaved' => 'Save or reload your entered values before reviewing publication.',
+    'review_required' => 'Save or reload your entered values, then review affected usages before publishing.',
+    'switch_help' => 'You have unsaved changes. Save them, discard them, or cancel the selection change.',
+    'save_switch' => 'Save draft and switch',
+    'discard' => 'Discard and switch',
+    'cancel' => 'Cancel',
+];

@@ -9,6 +9,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use JFA\PhiCmsCore\Enums\NavigationGroup;
 use JFA\PhiCmsCore\Models\Section;
+use JFA\PhiCmsCore\Resources\Sections\Pages\EditSectionDraft;
 use JFA\PhiCmsCore\Resources\Sections\Pages\ListSections;
 use JFA\PhiCmsCore\Resources\Sections\Schemas\SectionForm;
 use JFA\PhiCmsCore\Resources\Sections\Tables\SectionsTable;
@@ -53,6 +54,7 @@ class SectionResource extends Resource
     {
         return [
             'index' => ListSections::route('/'),
+            'draft' => EditSectionDraft::route('/{record}/draft'),
         ];
     }
 }
