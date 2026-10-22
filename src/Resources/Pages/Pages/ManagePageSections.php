@@ -46,7 +46,13 @@ class ManagePageSections extends ManageRelatedRecords
                     ->beforeFormValidated(fn (Section $record) => LegacySectionGuard::edit($record)),
             ])
             ->headerActions([
-                CreateAction::make(),
+                CreateAction::make()
+                    ->databaseTransaction()
+                    ->beforeFormValidated(function (): void {
+                        /** @var Page $page */
+                        $page = $this->getOwnerRecord();
+                        LegacySectionGuard::assertLegacyPlacementAllowed($page);
+                    }),
             ]);
     }
 

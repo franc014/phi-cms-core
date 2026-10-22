@@ -2,7 +2,9 @@
 
 namespace JFA\PhiCmsCore\Sections;
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
@@ -14,6 +16,24 @@ final class LegacySectionGuard
 
         if ($current?->content_version !== null) {
             throw ValidationException::withMessages(['content' => 'Use the Services draft editor. Legacy content, metadata, status and media mutations are disabled.']);
+        }
+    }
+
+    public static function assertLegacyPlacementAllowed(Page $page): void
+    {
+        $sectionIds = DB::table('page_section')
+            ->where('page_id', $page->getKey())
+            ->orderBy('section_id')
+            ->pluck('section_id')
+            ->all();
+        $sections = Section::query()
+            ->whereIn('id', $sectionIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        if ($sections->contains(fn (Section $section): bool => $section->content_version !== null)) {
+            throw ValidationException::withMessages(['sections' => 'Adopted Section placements are read-only until the Page composition workflow is installed.']);
         }
     }
 
