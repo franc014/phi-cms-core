@@ -21,6 +21,13 @@ final class LegacySectionGuard
 
     public static function assertLegacyPlacementAllowed(Page $page): void
     {
+        // Related creation inserts a Section after this check. Acquire the same
+        // table lock as Services creation/type changes before taking row locks,
+        // including when the submitted type itself needs that table lock.
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement('LOCK TABLE sections IN SHARE ROW EXCLUSIVE MODE');
+        }
+
         $sectionIds = DB::table('page_section')
             ->where('page_id', $page->getKey())
             ->orderBy('section_id')
@@ -31,6 +38,16 @@ final class LegacySectionGuard
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
+
+        $currentSectionIds = DB::table('page_section')
+            ->where('page_id', $page->getKey())
+            ->orderBy('section_id')
+            ->pluck('section_id')
+            ->all();
+
+        if ($sectionIds !== $currentSectionIds) {
+            throw ValidationException::withMessages(['sections' => 'Section placements changed while this action was waiting. Refresh the Page and try again.']);
+        }
 
         if ($sections->contains(fn (Section $section): bool => $section->content_version !== null)) {
             throw ValidationException::withMessages(['sections' => 'Adopted Section placements are read-only until the Page composition workflow is installed.']);
