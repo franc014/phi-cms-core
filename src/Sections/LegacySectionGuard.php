@@ -21,11 +21,11 @@ final class LegacySectionGuard
 
     public static function assertLegacyPlacementAllowed(Page $page): void
     {
-        // Related creation inserts a Section after this check. Acquire the same
-        // table lock as Services creation/type changes before taking row locks,
-        // including when the submitted type itself needs that table lock.
+        // Serialize related creates against each other and Services table locks
+        // before taking rows, without blocking ordinary row owners' UPDATEs.
+        // A Services insert can then safely upgrade its table lock after this guard.
         if (DB::getDriverName() === 'pgsql') {
-            DB::statement('LOCK TABLE sections IN SHARE ROW EXCLUSIVE MODE');
+            DB::statement('LOCK TABLE sections IN SHARE UPDATE EXCLUSIVE MODE');
         }
 
         $sectionIds = DB::table('page_section')
