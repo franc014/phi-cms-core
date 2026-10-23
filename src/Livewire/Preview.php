@@ -83,6 +83,7 @@ class Preview extends FormsComponent
 
         if ($decision === 'cancel') {
             $this->pendingSectionId = null;
+            $this->dispatch('phi-section-editor-focus');
 
             return;
         }
@@ -96,6 +97,7 @@ class Preview extends FormsComponent
         }
 
         $this->loadSection($this->pendingSectionId);
+        $this->dispatch('phi-section-editor-focus');
     }
 
     public function saveDraft(): void

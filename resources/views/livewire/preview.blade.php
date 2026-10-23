@@ -1,4 +1,6 @@
-<div class="space-y-6 bg-gray-50 p-4 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+<div class="space-y-6 bg-gray-50 p-4 text-gray-900 dark:bg-gray-950 dark:text-gray-100"
+    x-data
+    x-on:phi-section-editor-focus="$nextTick(() => $refs.editorForm?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus())">
     <header>
         <h1 class="text-2xl font-semibold">{{ __('phi-cms-core::workflow.preview') }}</h1>
         <p>{{ __('phi-cms-core::workflow.preview_help') }}</p>
@@ -22,7 +24,7 @@
             @endif
             @if ($selectedSection)
                 <h2 class="text-xl font-semibold">{{ $selectedSection->title }}</h2>
-                <form wire:submit="saveDraft" class="space-y-4">
+                <form wire:submit="saveDraft" x-ref="editorForm" class="space-y-4">
                     {{ $this->form }}
                     @if ($canUpdate)
                         <x-filament::button type="submit" wire:loading.attr="disabled">{{ __('phi-cms-core::workflow.save') }}</x-filament::button>
