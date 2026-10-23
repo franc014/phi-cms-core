@@ -340,9 +340,6 @@ final class SectionImages
             if ($locked->collection_name !== $this->collection() || $locked->disk !== $this->disk()) {
                 throw new RuntimeException('Only private PHI images may be cleaned up.');
             }
-            if ($locked->getCustomProperty('phi_first_published_at') !== null) {
-                throw ValidationException::withMessages(['media' => 'Published Gallery images are immutable and cannot be physically deleted.']);
-            }
             $owner = $locked->model_type === (new Section)->getMorphClass()
                 ? Section::query()->lockForUpdate()->find($locked->model_id)
                 : null;

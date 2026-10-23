@@ -1,5 +1,6 @@
 <?php
 
+use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\TextInput;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User;
@@ -9,6 +10,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\View;
+use JFA\PhiCmsCore\Forms\Components\Image;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionContent;
 use JFA\PhiCmsCore\Sections\SectionDefinition;
@@ -36,6 +38,22 @@ class PlainSectionForCoreTest extends SectionDefinition
         return Validator::make(['content' => $content], ['content' => 'required|array:title', 'content.title' => 'required|string'])->validate()['content'];
     }
 }
+
+class ImagesForCoreTest extends PlainSectionForCoreTest
+{
+    public static function fields(): array
+    {
+        return [Image::make('cover'), Repeater::make('cards')->schema([Image::make('photo')->required()])];
+    }
+}
+
+it('derives image references and requiredness from the native schema without a host reference map', function (): void {
+    expect(ImagesForCoreTest::imageReferences(['cover' => null, 'cards' => [['photo' => 'media:first'], ['photo' => 'media:second']]]))->toBe([
+        ['path' => 'content.cover', 'reference' => '', 'required' => false],
+        ['path' => 'content.cards.0.photo', 'reference' => 'media:first', 'required' => true],
+        ['path' => 'content.cards.1.photo', 'reference' => 'media:second', 'required' => true],
+    ]);
+});
 
 it('renders and independently publishes plain keyed content with only Core providers and no editor activation on public reads', function (): void {
     View::addNamespace('core-test', __DIR__ . '/Fixtures/views');

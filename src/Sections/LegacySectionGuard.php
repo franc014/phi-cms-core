@@ -59,6 +59,9 @@ final class LegacySectionGuard
         if (MediaMutation::allowed()) {
             return;
         }
+        if (self::hasProtectedGalleryUsage($media)) {
+            throw ValidationException::withMessages(['media' => 'This file supplies a Gallery image or its usage inventory is incomplete.']);
+        }
 
         // Adoption locks Media before Sections. Take the same order here so a
         // queued conversion cannot deadlock with an in-flight adoption.
@@ -82,6 +85,9 @@ final class LegacySectionGuard
         if (MediaMutation::allowed()) {
             return;
         }
+        if (self::hasProtectedGalleryUsage($media)) {
+            throw ValidationException::withMessages(['media' => 'This file supplies a Gallery image or its usage inventory is incomplete.']);
+        }
 
         $owners = array_unique([
             [$media->model_type, $media->model_id],
@@ -98,6 +104,9 @@ final class LegacySectionGuard
 
     public static function conversionIsProtected(Media $media): bool
     {
+        if (self::hasProtectedGalleryUsage($media)) {
+            return true;
+        }
         $current = $media->exists
             ? $media->newQuery()->with('model')->find($media->getKey())
             : $media;
@@ -144,5 +153,18 @@ final class LegacySectionGuard
         }
 
         return Section::query()->find((int) $id);
+    }
+
+    public static function hasProtectedGalleryUsage(Media $media): bool
+    {
+        if (! $media->exists || ! Section::query()->where('type', 'gallery')->whereNotNull('legacy_image_sources')->exists()) {
+            return false;
+        }
+
+        try {
+            return app(SectionImages::class)->usages($media->fresh() ?? $media) !== [];
+        } catch (\Throwable) {
+            return true;
+        }
     }
 }

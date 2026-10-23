@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -65,12 +66,18 @@ class Section extends ContentModel
             // cascades into Media, so take that same order before locking the row.
             if ($this->exists) {
                 $mediaClass = config('media-library.media_model', Media::class);
-                $mediaClass::query()
+                $ownedMedia = $mediaClass::query()
                     ->where('model_type', $this->getMorphClass())
                     ->where('model_id', $this->getKey())
                     ->orderBy('id')
                     ->lockForUpdate()
                     ->get();
+                foreach ($ownedMedia as $media) {
+                    if (LegacySectionGuard::hasProtectedGalleryUsage($media)
+                        || $media->collection_name === config('phi-cms.images.collection', 'phi-section-images')) {
+                        throw ValidationException::withMessages(['content' => 'This Section owns retained images or supplies protected Gallery bytes.']);
+                    }
+                }
             }
 
             $current = static::query()->lockForUpdate()->find($this->getKey());

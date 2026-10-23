@@ -2,7 +2,10 @@
 
 namespace JFA\PhiCmsCore\Sections;
 
+use Filament\Forms\Components\Repeater;
 use Filament\Schemas\Components\Component;
+use InvalidArgumentException;
+use JFA\PhiCmsCore\Forms\Components\Image;
 
 abstract class SectionDefinition
 {
@@ -31,7 +34,38 @@ abstract class SectionDefinition
      */
     public static function imageReferences(array $content): array
     {
-        return [];
+        return self::collectImages(static::fields(), $content, 'content');
+    }
+
+    /**
+     * @param  array<Component>  $fields
+     * @param  array<string, mixed>  $content
+     * @return list<array{path: string, reference: string, required: bool}>
+     */
+    private static function collectImages(array $fields, array $content, string $prefix): array
+    {
+        $references = [];
+        foreach ($fields as $field) {
+            if ($field instanceof Image) {
+                $value = data_get($content, $field->getName());
+                $references[] = ['path' => $prefix . '.' . $field->getName(), 'reference' => is_string($value) ? $value : '', 'required' => $field->isRequired()];
+            } elseif ($field instanceof Repeater) {
+                if ($field->getRelationshipName() !== null) {
+                    throw new InvalidArgumentException('Relationship repeaters are not supported in Section definitions.');
+                }
+                $children = $field->getDefaultChildComponents();
+                if (! is_array($children)) {
+                    throw new InvalidArgumentException('Section image discovery requires a static native repeater schema.');
+                }
+                foreach (data_get($content, $field->getName(), []) ?? [] as $key => $item) {
+                    $references = [...$references, ...self::collectImages($children, is_array($item) ? $item : [], $prefix . '.' . $field->getName() . '.' . $key)];
+                }
+            } elseif ($field->getDefaultChildComponents() !== []) {
+                throw new InvalidArgumentException('Section image discovery supports explicit Image fields and ordinary repeaters only.');
+            }
+        }
+
+        return $references;
     }
 
     /**
