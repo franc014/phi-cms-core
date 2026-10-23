@@ -4,6 +4,7 @@ namespace JFA\PhiCmsCore\Forms\Components;
 
 use Filament\Forms\Components\FileUpload;
 use Illuminate\Validation\Rules\File;
+use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Sections\SectionImages;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
@@ -31,8 +32,12 @@ final class Image extends FileUpload
             ->getUploadedFileUsing(function (Image $component, string $file, string | array | null $storedFileNames): ?array {
                 return app(SectionImages::class)->metadata($file);
             })
-            ->saveUploadedFileUsing(function (TemporaryUploadedFile $file): string {
-                return app(SectionImages::class)->retain($file);
+            ->saveUploadedFileUsing(function (TemporaryUploadedFile $file, Image $component): string {
+                try {
+                    return app(SectionImages::class)->retain($file);
+                } catch (ValidationException $exception) {
+                    throw ValidationException::withMessages([$component->getStatePath() => collect($exception->errors())->flatten()->all()]);
+                }
             })
             ->deleteUploadedFileUsing(function (string | TemporaryUploadedFile $file): void {
                 // Removing a form value only removes the draft reference. The

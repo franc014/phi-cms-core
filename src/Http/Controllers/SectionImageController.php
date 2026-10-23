@@ -3,8 +3,10 @@
 namespace JFA\PhiCmsCore\Http\Controllers;
 
 use Illuminate\Routing\Controller;
+use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionContent;
+use JFA\PhiCmsCore\Sections\SectionImageContext;
 use JFA\PhiCmsCore\Sections\SectionImages;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -29,6 +31,11 @@ final class SectionImageController extends Controller
     {
         request()->attributes->set('phi-cms.private', true);
         $content->draft($section);
+        $pageId = request()->query('page');
+        $page = $pageId === null ? null : Page::query()->published()->findOrFail($pageId);
+        $context = app(SectionImageContext::class);
+        $context->set($section, $page, preview: true);
+        $context->authorizeRead();
         $mediaClass = config('media-library.media_model');
         $media = $mediaClass::query()->where('uuid', $uuid)->firstOrFail();
         $path = $images->privatePath($section, $media);

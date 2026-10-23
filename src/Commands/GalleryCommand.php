@@ -6,7 +6,9 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Models\Media;
 use JFA\PhiCmsCore\Models\Section;
+use JFA\PhiCmsCore\Sections\SectionImages;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use RuntimeException;
 use Throwable;
@@ -32,6 +34,8 @@ final class GalleryCommand extends Command
 
     public function handle(SectionRegistry $registry): int
     {
+        $this->reportCreated = false;
+
         try {
             if ($this->option('compare-public')) {
                 return $this->comparePublic();
@@ -71,6 +75,9 @@ final class GalleryCommand extends Command
                     DB::statement('LOCK TABLE sections IN SHARE ROW EXCLUSIVE MODE');
                 }
 
+                $ids = Section::query()->where('type', 'gallery')->pluck('id');
+                Media::query()->where('model_type', (new Section)->getMorphClass())
+                    ->whereIn('model_id', $ids)->orderBy('id')->lockForUpdate()->get();
                 Section::query()->where('type', 'gallery')->orderBy('id')->lockForUpdate()->get();
                 $current = $this->inventory($registry);
                 if ($current['fingerprint'] !== $before['fingerprint']) {
@@ -81,6 +88,9 @@ final class GalleryCommand extends Command
                     if ($this->option('rollback')) {
                         $this->rollbackSection($row, $registry);
                     } elseif ($row['content_version'] === null) {
+                        if ($row['draft_content'] !== null || $row['published_content'] !== null) {
+                            throw new RuntimeException('Recovery snapshots must not be reset by adoption.');
+                        }
                         $legacy = $this->legacyContent($row, $registry);
                         $definition = $registry->get('gallery');
                         $snapshot = $definition::adoptLegacy($legacy);
@@ -120,6 +130,7 @@ final class GalleryCommand extends Command
     /** @return array<string, mixed> */
     private function inventory(SectionRegistry $registry): array
     {
+        app(SectionImages::class)->assertPrivateDisk((string) config('phi-cms.images.disk', 'phi-cms-images'));
         $limit = filter_var($this->option('max-records'), FILTER_VALIDATE_INT);
         if ($limit === false || $limit < 1 || $limit > 10000) {
             throw new RuntimeException('max-records must be between 1 and 10000.');
@@ -130,14 +141,33 @@ final class GalleryCommand extends Command
             throw new RuntimeException('Gallery inventory exceeds the requested bound.');
         }
 
+        $sources = [];
         foreach ($rows as $row) {
-            if ($row['content_version'] === null) {
-                $this->legacyContent($row, $registry);
+            if ($row['content_version'] === null && $row['published_content'] === null) {
+                $sources[$row['id']] = $registry->get('gallery')::legacyImageSources($this->legacyContent($row, $registry));
             } else {
                 foreach (['draft_content', 'published_content'] as $snapshot) {
                     $content = json_decode($row[$snapshot] ?? 'null', true, flags: JSON_THROW_ON_ERROR);
                     $registry->get('gallery')::normalize($content ?? throw new RuntimeException("Section {$row['id']} has no {$snapshot}."));
                 }
+                $bindings = json_decode($row['legacy_image_sources'] ?? 'null', true, flags: JSON_THROW_ON_ERROR);
+                if (! is_array($bindings)) {
+                    throw new RuntimeException("Section {$row['id']} has no source inventory.");
+                }
+                foreach ($bindings as $binding) {
+                    if (($binding['kind'] ?? null) === 'external') {
+                        continue;
+                    }
+                    if (($binding['kind'] ?? null) !== 'disk' || ! is_string($binding['disk'] ?? null) || ! is_string($binding['key'] ?? null)) {
+                        throw new RuntimeException("Section {$row['id']} has an unverified source binding.");
+                    }
+                    $path = realpath(Storage::disk($binding['disk'])->path($binding['key']));
+                    if ($path === false || $path !== ($binding['physical_path'] ?? null) || ! is_file($path)
+                        || hash_file('sha256', $path) !== ($binding['sha256'] ?? null)) {
+                        throw new RuntimeException("Section {$row['id']} legacy image bytes or physical identity changed.");
+                    }
+                }
+                $sources[$row['id']] = $bindings;
             }
         }
 
@@ -154,6 +184,39 @@ final class GalleryCommand extends Command
         $pages = $pageIds === [] ? [] : DB::table('pages')->whereIn('id', $pageIds)->orderBy('id')->get()->map(fn (object $row): array => (array) $row)->all();
 
         $inventory = ['sections' => $rows, 'placements' => $placements, 'pages' => $pages];
+        $inventory['sources'] = $sources;
+        $inventory['attachments'] = [];
+        foreach (Media::query()->where('model_type', (new Section)->getMorphClass())->whereIn('model_id', $ids)->orderBy('id')->get() as $media) {
+            if (config('filesystems.disks.' . $media->disk . '.driver') !== 'local'
+                || ($media->conversions_disk && config('filesystems.disks.' . $media->conversions_disk . '.driver') !== 'local') || $media->responsive_images) {
+                throw new RuntimeException("Unsupported disk or responsive-image inventory for Gallery attachment {$media->id}.");
+            }
+            $disk = Storage::disk($media->disk);
+            $files = [];
+            if (! $disk->exists($media->getPathRelativeToRoot())) {
+                throw new RuntimeException("Missing original for Gallery attachment {$media->id}.");
+            }
+            foreach ($disk->allFiles(dirname($media->getPathRelativeToRoot())) as $path) {
+                $physical = realpath($disk->path($path));
+                $root = realpath($disk->path(''));
+                if ($physical === false || $root === false || ! str_starts_with($physical, $root . DIRECTORY_SEPARATOR) || ! is_file($physical) || ! is_readable($physical)) {
+                    throw new RuntimeException("Unprovable Gallery attachment file {$media->id}.");
+                }
+                $files[$path] = ['physical_path' => $physical, 'sha256' => hash_file('sha256', $physical), 'bytes' => filesize($physical)];
+            }
+            foreach ($media->generated_conversions ?? [] as $conversion => $generated) {
+                if (! $generated) {
+                    continue;
+                }
+                $physical = realpath($media->getPath($conversion));
+                $conversionRoot = realpath(Storage::disk($media->conversions_disk ?: $media->disk)->path(''));
+                if ($physical === false || $conversionRoot === false || ! str_starts_with($physical, $conversionRoot . DIRECTORY_SEPARATOR) || ! is_file($physical) || ! is_readable($physical)) {
+                    throw new RuntimeException("Missing or ambiguous Gallery attachment conversion {$media->id}:{$conversion}.");
+                }
+                $files['conversion:' . $conversion] = ['physical_path' => $physical, 'sha256' => hash_file('sha256', $physical), 'bytes' => filesize($physical)];
+            }
+            $inventory['attachments'][] = ['row' => $media->getRawOriginal(), 'files' => $files];
+        }
 
         return $inventory + ['fingerprint' => hash('sha256', json_encode($inventory, JSON_THROW_ON_ERROR))];
     }
@@ -228,7 +291,6 @@ final class GalleryCommand extends Command
         if ($this->option('rollback') === 'current-public') {
             $legacy = $definition::toLegacy($published);
             $updates['content'] = json_encode([['type' => 'gallery', 'data' => $legacy]], JSON_THROW_ON_ERROR);
-            $updates['legacy_image_sources'] = json_encode($definition::legacyImageSources($legacy), JSON_THROW_ON_ERROR);
         }
 
         DB::table('sections')->where('id', $row['id'])->update($updates);

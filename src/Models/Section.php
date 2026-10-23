@@ -19,7 +19,8 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  * @property array<string, mixed>|null $draft_content
  * @property array<string, mixed>|null $published_content
  * @property int|null $content_version
- * @property list<array{reference: string, url: string}>|null $legacy_image_sources
+ * @property list<mixed>|null $legacy_image_sources
+ * @property array<array-key, mixed>|null $content
  */
 class Section extends ContentModel
 {
@@ -36,7 +37,7 @@ class Section extends ContentModel
             }
             if ($this->exists) {
                 $current = static::query()->lockForUpdate()->findOrFail($this->getKey());
-                if ($current->content_version !== null || $this->isDirty(['draft_content', 'published_content', 'content_version'])) {
+                if ($current->content_version !== null || ($current->type === 'gallery' && $current->published_content !== null) || $this->isDirty(['draft_content', 'published_content', 'content_version'])) {
                     throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.adopted_section_editor')]);
                 }
                 if ($current->type !== 'services' && $this->type === 'services' && $this->servicesHaveBeenAdopted()) {

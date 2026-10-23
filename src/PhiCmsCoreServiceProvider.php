@@ -14,6 +14,7 @@ use JFA\PhiCmsCore\Commands\GuardedCleanCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
 use JFA\PhiCmsCore\Commands\ServicesCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
+use JFA\PhiCmsCore\Http\Middleware\AuthorizeSectionTemporaryPreview;
 use JFA\PhiCmsCore\Http\Middleware\PrivatePreviewResponse;
 use JFA\PhiCmsCore\Livewire\Preview;
 use JFA\PhiCmsCore\Schema\FieldFactory;
@@ -27,8 +28,13 @@ use JFA\PhiCmsCore\Sections\SectionImageContext;
 use JFA\PhiCmsCore\Sections\SectionImages;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use JFA\PhiCmsCore\Sections\SectionRenderer;
+use JFA\PhiCmsCore\Sections\SectionTemporaryFileSynth;
+use JFA\PhiCmsCore\Sections\SectionTemporaryUploads;
 use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
 use JFA\PhiCmsCore\View\Components\SectionView;
+use Livewire\Component;
+use Livewire\Features\SupportFileUploads\FilePreviewController;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use Livewire\Features\SupportTesting\Testable;
 use Livewire\Livewire;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
@@ -169,7 +175,28 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     {
         Blade::component(SectionView::class, 'phi-cms-core::section');
         Livewire::component('phi-cms-core.preview', Preview::class);
+        $this->app->booted(static function (): void {
+            Livewire::propertySynthesizer(SectionTemporaryFileSynth::class);
+        });
+        \Livewire\on('call', static function (Component $component, string $method, array $params): void {
+            if (! in_array($method, ['_finishUpload', '_removeUpload'], true)) {
+                return;
+            }
+            foreach ((array) ($params[1] ?? []) as $value) {
+                if (! is_string($value)) {
+                    continue;
+                }
+                $filename = TemporaryUploadedFile::extractPathFromSignedPath($value);
+                $filename = $filename === false ? $value : $filename;
+                if (str_starts_with($filename, 'phi-')) {
+                    app(SectionTemporaryUploads::class)->file($filename, true, $component->getId(), $params[0] ?? null);
+                }
+            }
+        });
         $this->app['router']->pushMiddlewareToGroup('web', PrivatePreviewResponse::class);
+        if (! in_array(AuthorizeSectionTemporaryPreview::class, FilePreviewController::$middleware, true)) {
+            FilePreviewController::$middleware[] = AuthorizeSectionTemporaryPreview::class;
+        }
 
         if (in_array(config('media-library.media_model'), [null, Media::class], true)) {
             config(['media-library.media_model' => Models\Media::class]);

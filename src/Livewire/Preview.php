@@ -5,19 +5,78 @@ namespace JFA\PhiCmsCore\Livewire;
 use Filament\Forms\FormsComponent;
 use Filament\Schemas\Schema;
 use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\SectionStatus;
+use JFA\PhiCmsCore\Forms\Components\Image;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionConflict;
 use JFA\PhiCmsCore\Sections\SectionContent;
 use JFA\PhiCmsCore\Sections\SectionImageContext;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
+use JFA\PhiCmsCore\Sections\SectionTemporaryUploads;
 use Livewire\Attributes\Locked;
+use Livewire\Attributes\Renderless;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
+use Livewire\Features\SupportFileUploads\WithFileUploads;
 
 /** @property-read Schema $form */
 class Preview extends FormsComponent
 {
+    use WithFileUploads {
+        _finishUpload as protected finishNativeUpload;
+        _removeUpload as protected removeNativeUpload;
+    }
+
+    #[Locked]
+    public ?string $uploadContext = null;
+
+    #[Renderless]
+    public function _startUpload(mixed $name, mixed $fileInfo, mixed $isMultiple): void
+    {
+        abort_unless(is_string($name) && $isMultiple === false, 403);
+        $this->authorizeImageField($name);
+        abort_if($this->uploadContext === null, 403);
+        $ticket = app(SectionTemporaryUploads::class)->issue($this->getId(), $this->uploadContext, $name);
+        $url = URL::temporarySignedRoute('phi-cms.images.temporary', now()->addMinutes(5), ['ticket' => $ticket], absolute: false);
+        $this->dispatch('upload:generatedSignedUrl', name: $name, url: $url)->self();
+    }
+
+    public function _finishUpload(mixed $name, mixed $tmpPath, mixed $isMultiple, mixed $append = true): void
+    {
+        abort_unless(is_string($name) && is_array($tmpPath) && count($tmpPath) === 1 && is_string($tmpPath[0] ?? null) && $isMultiple === false, 403);
+        $this->authorizeImageField($name);
+        foreach ($tmpPath as $signed) {
+            $path = TemporaryUploadedFile::extractPathFromSignedPath($signed);
+            abort_unless(is_string($path), 403);
+            app(SectionTemporaryUploads::class)->file($path, true, $this->getId(), $name);
+        }
+        $this->finishNativeUpload($name, $tmpPath, $isMultiple, $append);
+    }
+
+    public function _removeUpload(mixed $name, mixed $tmpFilename): void
+    {
+        abort_unless(is_string($name) && is_string($tmpFilename), 403);
+        $this->authorizeImageField($name);
+        app(SectionTemporaryUploads::class)->file($tmpFilename, true, $this->getId(), $name);
+        $this->removeNativeUpload($name, $tmpFilename);
+    }
+
+    protected function cleanupOldUploads(): void {}
+
+    private function authorizeImageField(string $name): void
+    {
+        $this->selectedSection();
+        app(SectionImageContext::class)->authorizeUpload();
+        $field = $this->form->getComponentByStatePath($name, withAbsoluteStatePath: true);
+        if ($field === null && Str::isUuid(Str::afterLast($name, '.'))) {
+            $field = $this->form->getComponentByStatePath(Str::beforeLast($name, '.'), withAbsoluteStatePath: true);
+        }
+        abort_unless($field instanceof Image, 403);
+    }
+
     #[Locked]
     public ?int $pageId = null;
 
@@ -184,7 +243,7 @@ class Preview extends FormsComponent
         $this->content()->authorize('update', $section);
 
         try {
-            app(SectionRegistry::class)->get($section->type)::normalize($this->data);
+            app(SectionRegistry::class)->get($section->type)::normalize($this->canonicalInput());
             $state = $this->form->getState();
             $this->version = $this->content()->saveDraft($section, $state, $this->version);
             $this->baseline = app(SectionRegistry::class)->get($section->type)::normalize($state);
@@ -216,6 +275,7 @@ class Preview extends FormsComponent
         );
         $this->sectionId = $sectionId;
         $this->version = $section->content_version;
+        $this->uploadContext = app(SectionTemporaryUploads::class)->activate($this->getId());
         $this->baseline = $this->content()->draft($section);
         $this->cacheSchema('form', null);
         $this->form->fill($this->baseline);
@@ -231,7 +291,7 @@ class Preview extends FormsComponent
         }
 
         try {
-            return app(SectionRegistry::class)->get($this->selectedSection()->type)::normalize($this->data) !== $this->baseline;
+            return app(SectionRegistry::class)->get($this->selectedSection()->type)::normalize($this->canonicalInput()) !== $this->baseline;
         } catch (ValidationException) {
             return true;
         }
@@ -242,6 +302,28 @@ class Preview extends FormsComponent
         abort_if($this->sectionId === null, 403);
 
         return $this->authorizedSection($this->sectionId);
+    }
+
+    /** @return array<string, mixed> */
+    private function canonicalInput(): array
+    {
+        $data = $this->data;
+        foreach ($this->form->getFlatComponents(withActions: false, withHidden: true) as $field) {
+            if (! $field instanceof Image) {
+                continue;
+            }
+            $path = preg_replace('/^data\./', '', $field->getStatePath());
+            $state = data_get($data, $path);
+            if (is_array($state)) {
+                $state = array_values($state)[0] ?? null;
+            }
+            if ($state instanceof TemporaryUploadedFile) {
+                $state = 'pending:' . $state->getFilename();
+            }
+            data_set($data, $path, $state);
+        }
+
+        return $data;
     }
 
     private function authorizedSection(int $sectionId): Section

@@ -14,7 +14,7 @@ final class LegacySectionGuard
     {
         $current = $record->exists ? $record->fresh() : $record;
 
-        if ($current?->content_version !== null) {
+        if ($current?->content_version !== null || ($current?->type === 'gallery' && $current->published_content !== null)) {
             throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.services_draft_editor_required')]);
         }
     }

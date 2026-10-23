@@ -37,6 +37,10 @@ class ContentModel extends Model implements HasMedia
 
     public function registerAllMediaConversions(?Media $media = null): void
     {
+        if ($media?->collection_name === config('phi-cms.images.collection', 'phi-section-images')) {
+            return;
+        }
+
         $this
             ->addMediaConversion('thumb')
             ->fit(Fit::Contain, 300, 300);
