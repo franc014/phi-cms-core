@@ -124,4 +124,16 @@ return [
     'day' => 'Day',
     'hours' => 'Hours',
     'monday' => 'Monday',
+
+    // Legacy workflow guards
+    'adopted_section_editor' => 'Adopted Sections must use the definition-backed draft editor. Legacy metadata, status and media edits are disabled.',
+    'legacy_services_conversion' => 'Changing legacy content into Services is unsupported after adoption. Use the definition-backed workflow.',
+    'legacy_services_generator' => 'Creating or replicating Services through legacy generators is unsupported after adoption.',
+    'recovery_protected_section_delete' => 'Section is recovery-protected and cannot be deleted. Page usages: :usages.',
+    'none' => '(none)',
+    'adopted_section_placements_read_only' => 'Adopted Section placements are read-only until the Page composition workflow is installed.',
+    'services_draft_editor_required' => 'Use the Services draft editor. Legacy content, metadata, status and media mutations are disabled.',
+    'section_placements_changed' => 'Section placements changed while this action was waiting. Refresh the Page and try again.',
+    'protected_section_conversions' => 'Adopted and recovery-protected Section conversions cannot be regenerated through legacy paths.',
+    'protected_section_media' => 'Section media is adoption/recovery-protected. Legacy media mutations are disabled.',
 ];

@@ -36,14 +36,14 @@ class Section extends ContentModel
             if ($this->exists) {
                 $current = static::query()->lockForUpdate()->findOrFail($this->getKey());
                 if ($current->content_version !== null || $this->isDirty(['draft_content', 'published_content', 'content_version'])) {
-                    throw ValidationException::withMessages(['content' => 'Adopted Sections must use the definition-backed draft editor. Legacy metadata, status and media edits are disabled.']);
+                    throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.adopted_section_editor')]);
                 }
                 if ($current->type !== 'services' && $this->type === 'services' && $this->servicesHaveBeenAdopted()) {
-                    throw ValidationException::withMessages(['content' => 'Changing legacy content into Services is unsupported after adoption. Use the definition-backed workflow.']);
+                    throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.legacy_services_conversion')]);
                 }
             } elseif ($this->draft_content !== null || $this->published_content !== null || $this->content_version !== null
                 || ($this->type === 'services' && $this->servicesHaveBeenAdopted())) {
-                throw ValidationException::withMessages(['content' => 'Creating or replicating Services through legacy generators is unsupported after adoption.']);
+                throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.legacy_services_generator')]);
             }
 
             return parent::save($options);
@@ -78,7 +78,9 @@ class Section extends ContentModel
             if ($current->content_version !== null || $current->draft_content !== null || $current->published_content !== null) {
                 $usages = $current->pages()->orderBy('pages.id')->pluck('pages.title')->implode(', ');
 
-                throw ValidationException::withMessages(['content' => 'Section is recovery-protected and cannot be deleted. Page usages: ' . ($usages ?: '(none)') . '.']);
+                throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.recovery_protected_section_delete', [
+                    'usages' => $usages ?: __('phi-cms-core::phi-cms-core.none'),
+                ])]);
             }
 
             return parent::delete();

@@ -123,4 +123,16 @@ return [
     'day' => 'Día',
     'hours' => 'Horas',
     'monday' => 'Lunes',
+
+    // Protecciones del flujo heredado
+    'adopted_section_editor' => 'Las secciones adoptadas deben utilizar el editor de borradores basado en definiciones. Las ediciones heredadas de metadatos, estado y medios están deshabilitadas.',
+    'legacy_services_conversion' => 'No se admite cambiar contenido heredado a Servicios después de la adopción. Utiliza el flujo basado en definiciones.',
+    'legacy_services_generator' => 'No se permite crear o replicar Servicios mediante generadores heredados después de la adopción.',
+    'recovery_protected_section_delete' => 'La sección está protegida para recuperación y no se puede eliminar. Usos en páginas: :usages.',
+    'none' => '(ninguna)',
+    'adopted_section_placements_read_only' => 'Las asignaciones de secciones adoptadas son de solo lectura hasta que se instale el flujo de composición de páginas.',
+    'services_draft_editor_required' => 'Utiliza el editor de borradores de Servicios. Las mutaciones heredadas de contenido, metadatos, estado y medios están deshabilitadas.',
+    'section_placements_changed' => 'Las asignaciones de secciones cambiaron mientras esta acción esperaba. Actualiza la página e inténtalo de nuevo.',
+    'protected_section_conversions' => 'Las conversiones de secciones adoptadas y protegidas para recuperación no se pueden regenerar mediante rutas heredadas.',
+    'protected_section_media' => 'Los medios de la sección están protegidos por adopción/recuperación. Las mutaciones heredadas de medios están deshabilitadas.',
 ];

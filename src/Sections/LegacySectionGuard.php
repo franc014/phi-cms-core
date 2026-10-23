@@ -15,7 +15,7 @@ final class LegacySectionGuard
         $current = $record->exists ? $record->fresh() : $record;
 
         if ($current?->content_version !== null) {
-            throw ValidationException::withMessages(['content' => 'Use the Services draft editor. Legacy content, metadata, status and media mutations are disabled.']);
+            throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.services_draft_editor_required')]);
         }
     }
 
@@ -46,11 +46,11 @@ final class LegacySectionGuard
             ->all();
 
         if ($sectionIds !== $currentSectionIds) {
-            throw ValidationException::withMessages(['sections' => 'Section placements changed while this action was waiting. Refresh the Page and try again.']);
+            throw ValidationException::withMessages(['sections' => __('phi-cms-core::phi-cms-core.section_placements_changed')]);
         }
 
         if ($sections->contains(fn (Section $section): bool => $section->content_version !== null)) {
-            throw ValidationException::withMessages(['sections' => 'Adopted Section placements are read-only until the Page composition workflow is installed.']);
+            throw ValidationException::withMessages(['sections' => __('phi-cms-core::phi-cms-core.adopted_section_placements_read_only')]);
         }
     }
 
@@ -108,7 +108,7 @@ final class LegacySectionGuard
         $current = $section->exists ? $section->fresh() : $section;
 
         if (self::isProtected($current)) {
-            throw ValidationException::withMessages(['media' => 'Adopted and recovery-protected Section conversions cannot be regenerated through legacy paths.']);
+            throw ValidationException::withMessages(['media' => __('phi-cms-core::phi-cms-core.protected_section_conversions')]);
         }
     }
 
@@ -123,7 +123,7 @@ final class LegacySectionGuard
         $current = $section->exists ? $section->fresh() : $section;
 
         if ($current?->draft_content !== null || $current?->published_content !== null) {
-            throw ValidationException::withMessages(['media' => 'Section media is adoption/recovery-protected. Legacy media mutations are disabled.']);
+            throw ValidationException::withMessages(['media' => __('phi-cms-core::phi-cms-core.protected_section_media')]);
         }
 
         self::edit($current);
