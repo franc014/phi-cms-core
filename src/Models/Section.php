@@ -19,6 +19,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  * @property array<string, mixed>|null $draft_content
  * @property array<string, mixed>|null $published_content
  * @property int|null $content_version
+ * @property list<array{reference: string, url: string}>|null $legacy_image_sources
  */
 class Section extends ContentModel
 {
@@ -94,6 +95,7 @@ class Section extends ContentModel
             'draft_content' => 'array',
             'published_content' => 'array',
             'content_version' => 'integer',
+            'legacy_image_sources' => 'array',
         ]);
     }
 

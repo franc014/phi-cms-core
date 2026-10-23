@@ -5,5 +5,5 @@
             {{ __('phi-cms-core::workflow.select', ['title' => $section->title]) }}
         </button>
     @endif
-    @include($definitionView, ['content' => $content])
+    @include($definitionView, ['content' => $content, 'images' => $images])
 </section>

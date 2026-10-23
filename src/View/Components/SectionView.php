@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\View\Component;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
+use JFA\PhiCmsCore\Sections\SectionImageResolver;
 use JFA\PhiCmsCore\Sections\SectionRenderer;
 use Throwable;
 
@@ -16,6 +17,8 @@ final class SectionView extends Component
     public array $content;
 
     public string $definitionView;
+
+    public SectionImageResolver $images;
 
     public function __construct(
         SectionRenderer $renderer,
@@ -28,6 +31,7 @@ final class SectionView extends Component
             $rendered = $renderer->section($section, $page, $preview);
             $this->content = $rendered['content'];
             $this->definitionView = $rendered['view'];
+            $this->images = new SectionImageResolver($section, $this->content, $preview, $page);
         } catch (Throwable $exception) {
             if ($preview) {
                 throw $exception;

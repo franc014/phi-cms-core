@@ -11,6 +11,7 @@ use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionConflict;
 use JFA\PhiCmsCore\Sections\SectionContent;
+use JFA\PhiCmsCore\Sections\SectionImageContext;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use Livewire\Attributes\Locked;
 
@@ -208,6 +209,11 @@ class Preview extends FormsComponent
     private function loadSection(int $sectionId): void
     {
         $section = $this->authorizedSection($sectionId);
+        app(SectionImageContext::class)->set(
+            $section,
+            $this->pageId === null ? null : Page::findOrFail($this->pageId),
+            preview: true,
+        );
         $this->sectionId = $sectionId;
         $this->version = $section->content_version;
         $this->baseline = $this->content()->draft($section);
@@ -262,7 +268,12 @@ class Preview extends FormsComponent
         }
 
         if ($this->sectionId !== null) {
-            $this->authorizedSection($this->sectionId);
+            $section = $this->authorizedSection($this->sectionId);
+            app(SectionImageContext::class)->set(
+                $section,
+                $this->pageId === null ? null : Page::findOrFail($this->pageId),
+                preview: true,
+            );
         }
     }
 

@@ -56,6 +56,10 @@ final class LegacySectionGuard
 
     public static function conversion(Media $media): void
     {
+        if (MediaMutation::allowed()) {
+            return;
+        }
+
         // Adoption locks Media before Sections. Take the same order here so a
         // queued conversion cannot deadlock with an in-flight adoption.
         $current = $media->exists
@@ -75,6 +79,10 @@ final class LegacySectionGuard
 
     public static function media(Media $media): void
     {
+        if (MediaMutation::allowed()) {
+            return;
+        }
+
         $owners = array_unique([
             [$media->model_type, $media->model_id],
             [$media->getRawOriginal('model_type'), $media->getRawOriginal('model_id')],

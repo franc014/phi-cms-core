@@ -6,6 +6,7 @@ use Filament\Resources\Pages\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Resources\Sections\SectionResource;
 use JFA\PhiCmsCore\Sections\SectionContent;
+use JFA\PhiCmsCore\Sections\SectionImageContext;
 use Livewire\Attributes\Locked;
 
 class EditSectionDraft extends Page
@@ -20,11 +21,15 @@ class EditSectionDraft extends Page
     public function mount(int | string $record): void
     {
         $this->recordId = (int) $record;
-        app(SectionContent::class)->draft(Section::findOrFail($this->recordId));
+        $section = Section::findOrFail($this->recordId);
+        app(SectionContent::class)->draft($section);
+        app(SectionImageContext::class)->set($section, preview: true);
     }
 
     public function hydrate(): void
     {
-        app(SectionContent::class)->draft(Section::findOrFail($this->recordId));
+        $section = Section::findOrFail($this->recordId);
+        app(SectionContent::class)->draft($section);
+        app(SectionImageContext::class)->set($section, preview: true);
     }
 }

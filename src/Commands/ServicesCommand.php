@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Models\Media as PhiCmsMedia;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use RuntimeException;
@@ -142,10 +143,11 @@ class ServicesCommand extends Command
         }
         $pages = DB::table('pages')->whereIn('id', $pageIds)->orderBy('id')->get()->map(fn (object $row): array => (array) $row)->all();
         $media = [];
-        if (config('media-library.media_model') !== Media::class) {
+        $mediaClass = config('media-library.media_model', Media::class);
+        if (! in_array($mediaClass, [Media::class, PhiCmsMedia::class], true)) {
             throw new RuntimeException('Custom Media models require an explicit inventory review before Services adoption.');
         }
-        foreach (Media::query()->where('model_type', (new Section)->getMorphClass())->whereIn('model_id', $ids)->orderBy('id')->get() as $item) {
+        foreach ($mediaClass::query()->where('model_type', (new Section)->getMorphClass())->whereIn('model_id', $ids)->orderBy('id')->get() as $item) {
             $raw = $item->getRawOriginal();
             $raw['file_hashes'] = [];
             if (config('filesystems.disks.' . $item->disk . '.driver') !== 'local' || $item->responsive_images) {

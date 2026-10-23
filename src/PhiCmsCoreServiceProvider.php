@@ -7,6 +7,8 @@ use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Blade;
+use JFA\PhiCmsCore\Commands\GalleryCommand;
+use JFA\PhiCmsCore\Commands\GalleryDeleteMediaCommand;
 use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
 use JFA\PhiCmsCore\Commands\GuardedCleanCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
@@ -21,6 +23,8 @@ use JFA\PhiCmsCore\Schema\SchemaRegistry;
 use JFA\PhiCmsCore\Sections\GuardedFileManipulator;
 use JFA\PhiCmsCore\Sections\GuardedResponsiveImageGenerator;
 use JFA\PhiCmsCore\Sections\LegacySectionGuard;
+use JFA\PhiCmsCore\Sections\SectionImageContext;
+use JFA\PhiCmsCore\Sections\SectionImages;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use JFA\PhiCmsCore\Sections\SectionRenderer;
 use JFA\PhiCmsCore\Testing\TestsPhiCmsCore;
@@ -33,6 +37,7 @@ use Spatie\LaravelPackageTools\PackageServiceProvider;
 use Spatie\MediaLibrary\Conversions\FileManipulator;
 use Spatie\MediaLibrary\MediaCollections\Commands\CleanCommand;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Spatie\MediaLibrary\MediaCollections\Models\Observers\MediaObserver;
 use Spatie\MediaLibrary\ResponsiveImages\ResponsiveImageGenerator;
 
 class PhiCmsCoreServiceProvider extends PackageServiceProvider
@@ -123,7 +128,13 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         $this->app->bind(ResponsiveImageGenerator::class, GuardedResponsiveImageGenerator::class);
         $this->app->bind(CleanCommand::class, GuardedCleanCommand::class);
         $this->app->scoped(SectionRenderer::class);
+        $this->app->scoped(SectionImageContext::class);
+        $this->app->singleton(SectionImages::class);
         $this->app->singleton(SectionRegistry::class, fn () => new SectionRegistry(config('phi-cms.sections', [])));
+
+        if (config('media-library.media_model') === Media::class) {
+            config(['media-library.media_model' => Models\Media::class]);
+        }
 
         $this->app->singleton(SchemaRegistry::class, function (): SchemaRegistry {
             return SchemaRegistry::fromConfig(
@@ -159,9 +170,16 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         Blade::component(SectionView::class, 'phi-cms-core::section');
         Livewire::component('phi-cms-core.preview', Preview::class);
         $this->app['router']->pushMiddlewareToGroup('web', PrivatePreviewResponse::class);
+
+        if (in_array(config('media-library.media_model'), [null, Media::class], true)) {
+            config(['media-library.media_model' => Models\Media::class]);
+        }
+
         $mediaClass = config('media-library.media_model', Media::class);
+        $mediaClass::observe($this->app->make(MediaObserver::class));
         $mediaClass::saving([LegacySectionGuard::class, 'media']);
         $mediaClass::deleting([LegacySectionGuard::class, 'media']);
+        $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
 
         FilamentAsset::register(
             $this->getAssets(),
@@ -224,6 +242,8 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     {
         return [
             GenerateBlocksCommand::class,
+            GalleryCommand::class,
+            GalleryDeleteMediaCommand::class,
             SeedCommand::class,
             ServicesCommand::class,
         ];
@@ -269,6 +289,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             'create_categories_table',
             'create_category_post_table',
             'add_content_snapshots_to_sections_table',
+            'add_gallery_image_sources_to_sections_table',
         ];
     }
 }

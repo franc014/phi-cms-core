@@ -15,13 +15,16 @@ use Throwable;
 
 final class SectionContent
 {
-    public function __construct(private SectionRegistry $registry) {}
+    public function __construct(
+        private SectionRegistry $registry,
+        private SectionImages $images,
+    ) {}
 
     /** @return array<string, mixed> */
     public function published(Section $section): array
     {
         try {
-            $fresh = Section::query()->select(['id', 'type', 'content_version', 'published_content'])->findOrFail((int) $section->getKey());
+            $fresh = Section::query()->select(['id', 'type', 'content_version', 'published_content', 'legacy_image_sources'])->findOrFail((int) $section->getKey());
 
             return $this->normalizeSnapshot($fresh, $fresh->published_content);
         } catch (Throwable $exception) {
@@ -34,7 +37,7 @@ final class SectionContent
     public function renderPage(Page $page, bool $preview): array
     {
         $freshPage = $preview ? $this->authorizePage($page) : Page::query()->published()->findOrFail((int) $page->getKey());
-        $columns = ['sections.id', 'sections.type', 'content_version', 'published_content'];
+        $columns = ['sections.id', 'sections.type', 'content_version', 'published_content', 'legacy_image_sources'];
         if ($preview) {
             request()->attributes->set('phi-cms.private', true);
             $columns[] = 'draft_content';
@@ -98,6 +101,7 @@ final class SectionContent
             $this->authorize('update', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
             $normalized = $this->registry->get($fresh->type)::normalize($content);
+            $this->images->validateContent($fresh, $normalized);
 
             DB::table($fresh->getTable())->where('id', $fresh->id)->update([
                 'draft_content' => json_encode($normalized, JSON_THROW_ON_ERROR),
@@ -125,6 +129,7 @@ final class SectionContent
             $this->authorize('publish', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
             $content = $this->normalizeSnapshot($fresh, $fresh->draft_content);
+            $this->images->validateContent($fresh, $content);
             $usages = $this->usages($fresh);
             session()->put($this->reviewKey($fresh), [
                 'actor' => (string) auth()->id(),
@@ -146,6 +151,7 @@ final class SectionContent
             $this->authorize('publish', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
             $content = $this->normalizeSnapshot($fresh, $fresh->draft_content);
+            $this->images->validateContent($fresh, $content);
             $usages = $this->usages($fresh);
             $review = session()->get($this->reviewKey($fresh));
 
@@ -153,6 +159,8 @@ final class SectionContent
                 || ! hash_equals($review['fingerprint'], hash('sha256', json_encode([$content, $usages], JSON_THROW_ON_ERROR)))) {
                 throw new SectionConflict;
             }
+
+            $this->images->markPublished($fresh, $content);
 
             DB::table($fresh->getTable())->where('id', $fresh->id)->update([
                 'published_content' => json_encode($content, JSON_THROW_ON_ERROR),
