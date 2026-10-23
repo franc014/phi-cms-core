@@ -25,7 +25,10 @@ final class SectionImages
             || ($configuration['serve'] ?? false) || ($configuration['visibility'] ?? 'private') === 'public' || isset($configuration['url'])) {
             throw new RuntimeException('Gallery requires a non-served private local disk.');
         }
-        $path = rtrim(Storage::disk($diskName)->path(''), DIRECTORY_SEPARATOR);
+        $path = rtrim((string) ($configuration['root'] ?? ''), DIRECTORY_SEPARATOR);
+        if (! str_starts_with($path, DIRECTORY_SEPARATOR)) {
+            throw new RuntimeException('Gallery storage requires an absolute local root.');
+        }
         $root = realpath($path);
         if ($root === false) {
             $parent = realpath(dirname($path));
