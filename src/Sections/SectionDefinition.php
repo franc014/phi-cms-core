@@ -4,6 +4,7 @@ namespace JFA\PhiCmsCore\Sections;
 
 use Filament\Forms\Components\Repeater;
 use Filament\Schemas\Components\Component;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use JFA\PhiCmsCore\Forms\Components\Image;
 
@@ -48,6 +49,9 @@ abstract class SectionDefinition
         foreach ($fields as $field) {
             if ($field instanceof Image) {
                 $value = data_get($content, $field->getName());
+                if ($value !== null && (! is_string($value) || trim($value) === '')) {
+                    throw ValidationException::withMessages([$prefix . '.' . $field->getName() => 'The image selection must be a nonempty reference or null.']);
+                }
                 $references[] = ['path' => $prefix . '.' . $field->getName(), 'reference' => is_string($value) ? $value : '', 'required' => $field->isRequired()];
             } elseif ($field instanceof Repeater) {
                 if ($field->getRelationshipName() !== null) {

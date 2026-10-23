@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\View;
+use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Forms\Components\Image;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionContent;
@@ -54,6 +55,10 @@ it('derives image references and requiredness from the native schema without a h
         ['path' => 'content.cards.1.photo', 'reference' => 'media:second', 'required' => true],
     ]);
 });
+
+it('rejects invalid non-null selections on optional native image fields', function (mixed $selection): void {
+    expect(fn () => ImagesForCoreTest::imageReferences(['cover' => $selection, 'cards' => []]))->toThrow(ValidationException::class);
+})->with(['array' => [[]], 'number' => [123], 'boolean' => [false], 'empty' => [''], 'whitespace' => ['   ']]);
 
 it('renders and independently publishes plain keyed content with only Core providers and no editor activation on public reads', function (): void {
     View::addNamespace('core-test', __DIR__ . '/Fixtures/views');
