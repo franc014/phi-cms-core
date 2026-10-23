@@ -102,7 +102,11 @@ class Preview extends FormsComponent
 
     public function saveDraft(): void
     {
-        $this->persistDraft();
+        try {
+            $this->persistDraft();
+        } finally {
+            $this->dispatch('phi-section-editor-focus');
+        }
     }
 
     public function reloadLatest(): void
