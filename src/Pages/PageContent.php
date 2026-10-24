@@ -184,9 +184,7 @@ final class PageContent
 
         try {
             $version = $this->transaction(function () use ($page, $fields, $expectedVersion): int {
-                $sectionIds = $this->sectionIds($page->getKey(), 'draft');
-                $this->lockSections($sectionIds);
-                $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($page->getKey());
+                $fresh = $this->lockPage($page->getKey());
                 $this->authorize('update', $fresh);
                 $this->checkVersion($fresh, $expectedVersion);
                 $metadata = $this->validateMetadata($fields, $fresh);
@@ -204,7 +202,7 @@ final class PageContent
             $this->forgetReview($page);
 
             return $version;
-        } catch (ValidationException | PageConflict $exception) {
+        } catch (ValidationException|PageConflict $exception) {
             throw $exception;
         }
     }
@@ -250,8 +248,7 @@ final class PageContent
         $sectionIds = array_values(array_unique([...$this->sectionIds($page->getKey(), 'draft'), ...$requestedSectionIds]));
 
         return $this->transaction(function () use ($page, $rows, $expectedVersion, $sectionIds, $pivotIds): int {
-            $this->lockSections($sectionIds);
-            $fresh = Page::query()->lockForUpdate()->findOrFail($page->getKey());
+            $fresh = $this->lockPage($page->getKey(), $sectionIds);
             $this->authorize('compose', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
 
@@ -271,7 +268,7 @@ final class PageContent
                 }
             }
 
-            $selected = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $selected = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->get()->keyBy('id');
             $normalizedRows = [];
             foreach ($rows as $index => $row) {
                 $section = $selected->get($row['section_id']);
@@ -349,8 +346,7 @@ final class PageContent
         $this->assertAdopted($page);
 
         return $this->transaction(function () use ($page, $expectedVersion): array {
-            $this->lockSections($this->sectionIds($page->getKey(), 'draft'));
-            $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($page->getKey());
+            $fresh = $this->lockPage($page->getKey());
             $this->authorize('publish', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
             $metadata = $this->validateMetadata($this->draftMetadata($fresh), $fresh);
@@ -375,12 +371,7 @@ final class PageContent
         $this->assertAdopted($page);
 
         return $this->transaction(function () use ($page, $expectedVersion, $reviewToken): int {
-            $sectionIds = array_values(array_unique([
-                ...$this->sectionIds($page->getKey(), 'published'),
-                ...$this->sectionIds($page->getKey(), 'draft'),
-            ]));
-            $this->lockSections($sectionIds);
-            $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($page->getKey());
+            $fresh = $this->lockPage($page->getKey(), urls: true);
             $this->authorize('publish', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
             $review = session()->get($this->reviewKey($fresh));
@@ -389,7 +380,6 @@ final class PageContent
             }
 
             $metadata = $this->validateMetadata($this->draftMetadata($fresh), $fresh);
-            $this->lockPageUrls($fresh->getKey(), [$fresh->slug, $metadata['slug']]);
             $rows = $this->draftRows($fresh);
             $currentReview = $this->buildReview($fresh, $metadata, $rows);
             if (! hash_equals((string) $review['fingerprint'], $currentReview['fingerprint'])) {
@@ -412,11 +402,9 @@ final class PageContent
         $this->assertAdopted($page);
 
         return $this->transaction(function () use ($page, $expectedVersion): int {
-            $this->lockSections($this->sectionIds($page->getKey(), 'published'));
-            $fresh = Page::query()->lockForUpdate()->findOrFail($page->getKey());
+            $fresh = $this->lockPage($page->getKey(), urls: true);
             $this->authorize('publish', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
-            $this->lockPageUrls($fresh->getKey());
 
             DB::table('pages')->where('id', $fresh->getKey())->update([
                 'status' => PageStatus::DRAFT->value,
@@ -439,11 +427,9 @@ final class PageContent
         $this->assertAdopted($page);
 
         return $this->transaction(function () use ($page, $expectedVersion): string {
-            $this->lockSections(array_values(array_unique([...$this->sectionIds($page->getKey(), 'published'), ...$this->sectionIds($page->getKey(), 'draft')])));
-            $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($page->getKey());
+            $fresh = $this->lockPage($page->getKey(), urls: true);
             $this->authorize('delete', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
-            $this->lockPageUrls($fresh->getKey());
 
             $export = [
                 'page' => $fresh->getRawOriginal(),
@@ -452,7 +438,7 @@ final class PageContent
                 'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
                 'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
             ];
-            $path = 'phi-cms/pages/' . $fresh->getKey() . '/delete-' . now()->format('YmdHis') . '-' . Str::random(8) . '.json';
+            $path = 'phi-cms/pages/'.$fresh->getKey().'/delete-'.now()->format('YmdHis').'-'.Str::random(8).'.json';
             if (! Storage::disk('local')->put($path, json_encode($export, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 'private')) {
                 throw new PageConflict('The recovery export could not be written; the Page was not deleted.');
             }
@@ -477,11 +463,30 @@ final class PageContent
             throw new PageConflict("Page {$fresh->getKey()} is already adopted with the [{$fresh->template}] template.");
         }
         $assignments = $this->rawRows($fresh->getKey(), 'published');
+        if ($fresh->page_version === null) {
+            $unknownPageFields = array_diff(array_keys($fresh->getRawOriginal()), ['id', 'title', 'slug', 'description', 'route', 'status', 'published_at', 'created_at', 'updated_at', 'template', 'draft_fields', 'page_version']);
+            if ($unknownPageFields !== []) {
+                throw new PageConflict('Unknown Page fields require a preservation contract: '.implode(', ', $unknownPageFields));
+            }
+            $orders = array_column($assignments, 'order_column');
+            if (count($orders) !== count(array_unique($orders)) || in_array(null, $orders, true)) {
+                throw new PageConflict("Ambiguous relationship ordering on Page {$fresh->getKey()}; preserve and reconcile the source before adoption.");
+            }
+            $unknownColumns = array_diff(array_keys($assignments[0] ?? []), ['id', 'page_id', 'section_id', 'order_column', 'stage', 'occurrence_id', 'slot', 'created_at', 'updated_at']);
+            if ($unknownColumns !== []) {
+                throw new PageConflict('Unknown assignment fields require a preservation contract: '.implode(', ', $unknownColumns));
+            }
+            if (DB::table('metatags')->where('metatable_type', $fresh->getMorphClass())->where('metatable_id', $fresh->getKey())->count() > 1) {
+                throw new PageConflict('Multiple Page metatag rows require explicit reconciliation before adoption.');
+            }
+        }
         $sections = Section::query()->whereIn('id', array_values(array_unique(array_column($assignments, 'section_id'))))->orderBy('id')->get()->map(fn (Section $section): array => $section->getRawOriginal())->all();
         $inventory = [
             'page' => $fresh->getRawOriginal(),
             'metatags' => $fresh->metatags?->getRawOriginal(),
             'assignments' => $assignments,
+            'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
+            'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->orderBy('slug')->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
             'sections' => $sections,
             'template' => $template,
         ];
@@ -499,9 +504,7 @@ final class PageContent
         $this->pages->get($template);
 
         $this->transaction(function () use ($page, $template, $inventory, $beforeCommit): void {
-            $sectionIds = $this->sectionIds($page->getKey(), 'published');
-            $this->lockSections($sectionIds);
-            $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($page->getKey());
+            $fresh = $this->lockPage($page->getKey(), urls: true);
             if ($fresh->page_version !== null) {
                 if ($fresh->template !== $template) {
                     throw new PageConflict("Page {$fresh->getKey()} is already adopted with the [{$fresh->template}] template.");
@@ -518,7 +521,6 @@ final class PageContent
             }
             $assignments = $this->rawRows($fresh->getKey(), 'published');
             $sectionIds = array_values(array_unique(array_column($assignments, 'section_id')));
-            $this->lockSections($sectionIds);
             $metadata = array_replace($this->metadataFromPage($fresh), ['template' => $template]);
             $this->validateMetadata($metadata, $fresh);
             $sections = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->get()->keyBy('id');
@@ -535,7 +537,7 @@ final class PageContent
                 DB::table('page_section')->where('id', $assignment['id'])->update([
                     'stage' => 'published',
                     'occurrence_id' => $occurrence,
-                    'updated_at' => $assignment['updated_at'] ?? now(),
+                    'updated_at' => $assignment['updated_at'],
                 ]);
                 $exists = DB::table('page_section')->where('page_id', $fresh->getKey())->where('stage', 'draft')->where('occurrence_id', $occurrence)->exists();
                 if (! $exists) {
@@ -546,8 +548,8 @@ final class PageContent
                         'stage' => 'draft',
                         'occurrence_id' => $occurrence,
                         'slot' => $assignment['slot'] ?? null,
-                        'created_at' => $assignment['created_at'] ?? now(),
-                        'updated_at' => $assignment['updated_at'] ?? now(),
+                        'created_at' => $assignment['created_at'],
+                        'updated_at' => $assignment['updated_at'],
                     ]);
                 }
             }
@@ -555,9 +557,7 @@ final class PageContent
                 'template' => $template,
                 'draft_fields' => json_encode($metadata, JSON_THROW_ON_ERROR),
                 'page_version' => 1,
-                'updated_at' => now(),
             ]);
-            $this->lockPageUrls($fresh->getKey(), [$fresh->slug]);
             $this->syncUrls($fresh, $fresh->slug);
 
             if ($beforeCommit !== null) {
@@ -605,7 +605,7 @@ final class PageContent
                 'status' => $row['section']->status->value,
                 'content_version' => $row['section']->content_version,
                 'published_content' => $row['section']->published_content,
-                'legacy_content' => $row['section']->content_version === null ? $row['section']->content : null,
+                'legacy_source' => $row['section']->content_version === null ? $row['section']->getRawOriginal() : null,
             ], $rows),
         ], JSON_THROW_ON_ERROR));
 
@@ -617,9 +617,30 @@ final class PageContent
                 'slug' => $metadata['slug'],
                 'description' => $metadata['description'],
                 'section_count' => count($reviewRows),
+                'html' => $this->publicationHtml($page, $metadata),
             ],
             'fingerprint' => $fingerprint,
         ];
+    }
+
+    /** @param array<string, mixed> $metadata */
+    private function publicationHtml(Page $page, array $metadata): string
+    {
+        $view = config('phi-cms.page_publication_view');
+        if (! is_string($view) || ! view()->exists($view)) {
+            throw new PageConflict('Register the host public-layout review view before reviewing publication.');
+        }
+        $prospective = clone $page;
+        $prospective->forceFill(collect($metadata)->except('metatags')->all());
+        $prospective->setRelation('metatags', $metadata['metatags'] === null ? null : new Metatags($metadata['metatags']));
+        $sections = $page->draftSections()->where('sections.status', SectionStatus::ACTIVE)->get();
+        $prospective->setRelation('sections', $sections);
+
+        return view($view, [
+            'page' => $prospective,
+            'sections' => $sections,
+            'templateView' => $this->pages->get($metadata['template'])::view(),
+        ])->render();
     }
 
     /** @param list<array<string, mixed>> $rows */
@@ -641,7 +662,7 @@ final class PageContent
         }
         if ($requireRequired) {
             foreach ($composition['required'] as $required) {
-                $matching = array_filter($rows, function (array | Section $row) use ($required): bool {
+                $matching = array_filter($rows, function (array|Section $row) use ($required): bool {
                     $section = $row instanceof Section ? $row : ($row['section'] ?? $row);
 
                     return $section instanceof Section
@@ -687,7 +708,7 @@ final class PageContent
         $allowed = ['title', 'slug', 'description', 'template', 'metatags'];
         $unknown = array_diff(array_keys($fields), $allowed);
         if ($unknown !== []) {
-            throw ValidationException::withMessages(['fields' => 'Unknown Page fields: ' . implode(', ', $unknown) . '.']);
+            throw ValidationException::withMessages(['fields' => 'Unknown Page fields: '.implode(', ', $unknown).'.']);
         }
         foreach ($allowed as $key) {
             if (! array_key_exists($key, $fields)) {
@@ -713,7 +734,7 @@ final class PageContent
         if (is_array($fields['metatags'])) {
             $unknownMeta = array_diff(array_keys($fields['metatags']), self::METATAG_KEYS);
             if ($unknownMeta !== []) {
-                throw ValidationException::withMessages(['fields.metatags' => 'Unknown SEO fields: ' . implode(', ', $unknownMeta) . '.']);
+                throw ValidationException::withMessages(['fields.metatags' => 'Unknown SEO fields: '.implode(', ', $unknownMeta).'.']);
             }
             foreach (self::METATAG_KEYS as $key) {
                 if (! array_key_exists($key, $fields['metatags'])) {
@@ -822,6 +843,10 @@ final class PageContent
     /** @return list<array<string, mixed>> */
     private function rawRows(int $pageId, string $stage): array
     {
+        if (DB::table('page_section')->where('page_id', $pageId)->where('stage', $stage)->count() > 1000) {
+            throw new PageConflict('Page inventory exceeds the 1000-assignment safety bound. Reduce the explicit scope before continuing.');
+        }
+
         return DB::table('page_section')->where('page_id', $pageId)->where('stage', $stage)->orderBy('order_column')->orderBy('id')->get()->map(fn (object $row): array => (array) $row)->all();
     }
 
@@ -839,19 +864,66 @@ final class PageContent
         }
     }
 
-    /** @param list<string> $slugs */
-    private function lockPageUrls(int $pageId, array $slugs = []): void
+    /** @param list<int> $additionalSections */
+    private function lockPage(int $pageId, array $additionalSections = [], bool $urls = false): Page
     {
-        PageUrl::query()
+        $snapshot = Page::query()->findOrFail($pageId);
+        $references = $this->allSectionIds($pageId);
+        $slugs = $this->urlLockSet($snapshot);
+        $claims = [];
+        if ($urls) {
+            $claims = $this->lockPageUrls($pageId, $slugs);
+        }
+        $this->lockSections([...$references, ...$additionalSections]);
+        $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($pageId);
+        if ($references !== $this->allSectionIds($pageId) || ($urls && $slugs !== $this->urlLockSet($fresh))) {
+            throw new PageConflict('The Page reference or URL lock set changed. Reload latest and review again.');
+        }
+        if ($urls && $claims !== $this->urlClaims($pageId, $slugs)->get()->map(fn (PageUrl $url): array => $url->getAttributes())->all()) {
+            throw new PageConflict('URL ownership changed while waiting. Reload latest and review again.');
+        }
+
+        return $fresh;
+    }
+
+    /** @return list<int> */
+    private function allSectionIds(int $pageId): array
+    {
+        return DB::table('page_section')->where('page_id', $pageId)->distinct()->orderBy('section_id')->pluck('section_id')->map(fn (mixed $id): int => (int) $id)->all();
+    }
+
+    /** @return list<string> */
+    private function urlLockSet(Page $page): array
+    {
+        $slugs = PageUrl::query()->where('page_id', $page->getKey())->pluck('slug')->all();
+        $slugs[] = $page->slug;
+        $slugs[] = $page->draft_fields['slug'] ?? $page->slug;
+        $slugs = array_values(array_unique($slugs));
+        sort($slugs, SORT_STRING);
+
+        return $slugs;
+    }
+
+    /**
+     * @param  list<string>  $slugs
+     * @return list<array<string, mixed>>
+     */
+    private function lockPageUrls(int $pageId, array $slugs = []): array
+    {
+        return $this->urlClaims($pageId, $slugs)->lockForUpdate()->get()->map(fn (PageUrl $url): array => $url->getAttributes())->all();
+    }
+
+    /** @param list<string> $slugs */
+    private function urlClaims(int $pageId, array $slugs): Builder
+    {
+        return PageUrl::query()
             ->where(function (Builder $query) use ($pageId, $slugs): void {
                 $query->where('page_id', $pageId);
                 if ($slugs !== []) {
                     $query->orWhereIn('slug', array_values(array_unique($slugs)));
                 }
             })
-            ->orderBy('slug')
-            ->lockForUpdate()
-            ->get();
+            ->orderBy('slug');
     }
 
     /** @param list<array<string, mixed>> $rows */
@@ -940,7 +1012,7 @@ final class PageContent
             $old = PageUrl::query()->where('slug', $oldSlug)->lockForUpdate()->first();
             if ($old === null) {
                 PageUrl::query()->create(['slug' => $oldSlug, 'page_id' => $page->getKey(), 'kind' => 'redirect']);
-            } else {
+            } elseif ((int) $old->page_id === (int) $page->getKey()) {
                 $old->update(['page_id' => $page->getKey(), 'kind' => 'redirect']);
             }
         }
@@ -954,7 +1026,7 @@ final class PageContent
         }
     }
 
-    private function authorize(string $ability, Page | Section $record): void
+    private function authorize(string $ability, Page|Section $record): void
     {
         $actor = auth()->user()?->fresh();
         abort_if($actor === null, 403);
@@ -992,7 +1064,7 @@ final class PageContent
 
     private function reviewKey(Page $page): string
     {
-        return 'phi-cms.reviews.pages.' . $page->getKey();
+        return 'phi-cms.reviews.pages.'.$page->getKey();
     }
 
     private function transaction(Closure $operation): mixed

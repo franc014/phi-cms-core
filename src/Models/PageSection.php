@@ -73,7 +73,7 @@ class PageSection extends Pivot implements Sortable
         $sectionIds = array_merge($sectionIds, DB::table('page_section')->whereIn('page_id', $pageIds)->pluck('section_id')->all());
         $sections = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->lockForUpdate()->get();
         $pages = Page::query()->whereIn('id', $pageIds)->orderBy('id')->lockForUpdate()->get();
-        if ($pages->contains(fn (Page $page): bool => $page->page_version !== null)
+        if ($pages->contains(fn (Page $page): bool => $page->page_version !== null || $page->draft_fields !== null)
             || $sections->contains(fn (Section $section): bool => $section->content_version !== null)) {
             throw ValidationException::withMessages(['sections' => __('phi-cms-core::phi-cms-core.adopted_section_placements_read_only')]);
         }

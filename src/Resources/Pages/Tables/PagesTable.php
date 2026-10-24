@@ -10,6 +10,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
+use JFA\PhiCmsCore\Resources\Pages\Pages\ManagePageSections;
 
 class PagesTable
 {
@@ -25,7 +26,7 @@ class PagesTable
                 ->color('success')
                 ->icon(Heroicon::OutlinedArrowSmallUp)
                 ->hidden(function (Page $record): bool {
-                    return $record->page_version !== null || $record->status->value === 'published';
+                    return $record->draft_fields !== null || $record->page_version !== null || $record->status->value === 'published';
                 }),
             Action::make('unpublish')
                 ->label(__('phi-cms-core::phi-cms-core.unpublish'))
@@ -36,14 +37,16 @@ class PagesTable
                 ->icon(Heroicon::OutlinedArrowSmallDown)
                 ->color('warning')
                 ->hidden(function (Page $record): bool {
-                    return $record->page_version !== null || $record->status->value === 'draft';
+                    return $record->draft_fields !== null || $record->page_version !== null || $record->status->value === 'draft';
                 }),
             Action::make('manageSections')
-                ->label(__('phi-cms-core::phi-cms-core.manage_sections'))
+                ->label(fn (Page $record): string => $record->page_version !== null ? 'Draft sections' : __('phi-cms-core::phi-cms-core.manage_sections'))
                 ->icon(Heroicon::OutlinedRectangleGroup)
                 ->color('accent')
                 ->visible(function (Page $record): bool {
-                    return $record->page_version === null && $record->hasSections();
+                    return $record->page_version !== null
+                        ? ManagePageSections::canAccess(['record' => $record])
+                        : $record->hasSections();
                 })
                 ->url(fn (Page $record): string => PageResource::getUrl('manageSections', ['record' => $record])),
         ];
@@ -89,7 +92,7 @@ class PagesTable
             ->recordActions([
                 ...self::customActions(),
                 EditAction::make()
-                    ->visible(fn (Page $record): bool => $record->page_version === null),
+                    ->visible(fn (Page $record): bool => $record->page_version === null && $record->draft_fields === null),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([]),

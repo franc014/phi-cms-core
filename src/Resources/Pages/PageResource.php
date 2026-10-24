@@ -20,11 +20,11 @@ class PageResource extends Resource
 {
     protected static ?string $model = Page::class;
 
-    protected static string | BackedEnum | null $navigationIcon = Heroicon::OutlinedDocument;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedDocument;
 
     protected static ?string $recordTitleAttribute = 'title';
 
-    protected static string | UnitEnum | null $navigationGroup = NavigationGroup::CMS;
+    protected static string|UnitEnum|null $navigationGroup = NavigationGroup::CMS;
 
     public static function getModelLabel(): string
     {
@@ -38,13 +38,13 @@ class PageResource extends Resource
 
     public static function canEdit(Model $record): bool
     {
-        return ! ($record instanceof Page && $record->page_version !== null)
+        return ! ($record instanceof Page && ($record->page_version !== null || $record->draft_fields !== null))
             && parent::canEdit($record);
     }
 
     public static function canDelete(Model $record): bool
     {
-        return ! ($record instanceof Page && $record->page_version !== null)
+        return ! ($record instanceof Page && ($record->page_version !== null || $record->draft_fields !== null))
             && parent::canDelete($record);
     }
 

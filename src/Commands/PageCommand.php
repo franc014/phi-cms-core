@@ -119,6 +119,7 @@ class PageCommand extends Command
         }
 
         return DB::transaction(function () use ($page, $stage, $content, $template, $before, $provenance): array {
+            DB::table('page_urls')->where('page_id', $page->getKey())->orderBy('slug')->lockForUpdate()->get();
             $sectionIds = DB::table('page_section')
                 ->where('page_id', $page->getKey())
                 ->orderBy('section_id')
@@ -147,27 +148,27 @@ class PageCommand extends Command
             if ($stage === 'before-edit' && (int) $current->page_version !== 1) {
                 throw new RuntimeException('The Page has changed since adoption; before-edit rollback is unsafe. Use current-public after reviewing the latest state.');
             }
-            DB::table('page_urls')->where('page_id', $current->getKey())->orderBy('slug')->lockForUpdate()->get();
             $export = [
                 'page' => $current->getRawOriginal(),
                 'metatags' => $current->metatags?->getRawOriginal(),
                 'assignments' => DB::table('page_section')->where('page_id', $current->getKey())->get()->map(fn (object $row): array => (array) $row)->all(),
                 'urls' => DB::table('page_urls')->where('page_id', $current->getKey())->get()->map(fn (object $row): array => (array) $row)->all(),
             ];
-            $path = 'phi-cms/pages/' . $current->getKey() . '/rollback-' . now()->format('YmdHis') . '-' . Str::random(8) . '.json';
+            $path = 'phi-cms/pages/'.$current->getKey().'/rollback-'.now()->format('YmdHis').'-'.Str::random(8).'.json';
             if (! Storage::disk('local')->put($path, json_encode($export, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 'private')) {
                 throw new RuntimeException('The rollback recovery export could not be written.');
             }
 
             DB::table('page_section')->where('page_id', $current->getKey())->where('stage', 'draft')->delete();
-            DB::table('page_section')->where('page_id', $current->getKey())->where('stage', 'published')->update([
-                'occurrence_id' => null,
-                'slot' => null,
-                'updated_at' => now(),
-            ]);
-            DB::table('page_urls')->where('page_id', $current->getKey())->delete();
+            if ($stage === 'before-edit') {
+                DB::table('page_section')->where('page_id', $current->getKey())->where('stage', 'published')->update([
+                    'occurrence_id' => null,
+                    'slot' => null,
+                ]);
+                DB::table('page_urls')->where('page_id', $current->getKey())->delete();
+            }
             DB::table('pages')->where('id', $current->getKey())->update([
-                'template' => null,
+                'template' => $stage === 'current-public' ? $current->template : null,
                 'page_version' => null,
                 'status' => $current->status->value,
                 'updated_at' => now(),
@@ -186,7 +187,7 @@ class PageCommand extends Command
     private function requireBackup(): void
     {
         $backup = $this->option('backup');
-        if (! is_string($backup) || ! is_file($backup) || filesize($backup) === 0 || str_starts_with((string) realpath($backup), public_path() . DIRECTORY_SEPARATOR)) {
+        if (! is_string($backup) || ! is_file($backup) || filesize($backup) === 0 || str_starts_with((string) realpath($backup), public_path().DIRECTORY_SEPARATOR)) {
             throw new RuntimeException('A non-empty private database backup is required.');
         }
     }
@@ -233,6 +234,6 @@ class PageCommand extends Command
             throw new RuntimeException('Report names must be plain .json filenames, not paths.');
         }
 
-        return 'phi-cms/pages/' . $this->argument('page') . '/' . $filename;
+        return 'phi-cms/pages/'.$this->argument('page').'/'.$filename;
     }
 }

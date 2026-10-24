@@ -37,7 +37,7 @@ class Page extends Model
 
     public function save(array $options = []): bool
     {
-        if ($this->exists && ! PageMutation::allowed() && $this->getOriginal('page_version') !== null && $this->isDirty([
+        if ($this->exists && ! PageMutation::allowed() && ($this->getOriginal('page_version') !== null || $this->getOriginal('draft_fields') !== null) && $this->isDirty([
             'title',
             'slug',
             'description',
@@ -56,7 +56,7 @@ class Page extends Model
 
     public function delete(): ?bool
     {
-        if ($this->exists && ! PageMutation::allowed() && $this->getOriginal('page_version') !== null) {
+        if ($this->exists && ! PageMutation::allowed() && ($this->getOriginal('page_version') !== null || $this->getOriginal('draft_fields') !== null)) {
             throw ValidationException::withMessages(['page' => 'Adopted Pages must be deleted through the Page workflow.']);
         }
 
@@ -72,7 +72,10 @@ class Page extends Model
         return DB::transaction(function () use ($operation): mixed {
             $sectionIds = DB::table('page_section')->where('page_id', $this->getKey())->orderBy('section_id')->pluck('section_id')->unique()->values()->all();
             Section::query()->whereIn('id', $sectionIds)->orderBy('id')->lockForUpdate()->get();
-            static::query()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+            $current = static::query()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+            if (! PageMutation::allowed() && ($current->page_version !== $this->getOriginal('page_version') || ($current->draft_fields !== null && $this->getOriginal('draft_fields') === null))) {
+                throw ValidationException::withMessages(['page' => 'Page ownership changed. Reload latest; retained draft and URL recovery guards must not be bypassed.']);
+            }
             $currentIds = DB::table('page_section')->where('page_id', $this->getKey())->orderBy('section_id')->pluck('section_id')->unique()->values()->all();
             if ($currentIds !== $sectionIds) {
                 throw new SectionConflict;

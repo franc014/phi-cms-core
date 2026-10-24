@@ -101,6 +101,7 @@
                                         </li>
                                     @endforeach
                                 </ul>
+                                <iframe title="Prospective public Page — published Section content" sandbox="" width="100%" height="480" srcdoc="{{ $pageReview['prospective_result']['html'] }}"></iframe>
                                 <x-filament::button wire:click="publishPage">Publish Page</x-filament::button>
                             </div>
                         @endif
