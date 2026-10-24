@@ -202,7 +202,7 @@ final class PageContent
             $this->forgetReview($page);
 
             return $version;
-        } catch (ValidationException|PageConflict $exception) {
+        } catch (ValidationException | PageConflict $exception) {
             throw $exception;
         }
     }
@@ -438,7 +438,7 @@ final class PageContent
                 'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
                 'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
             ];
-            $path = 'phi-cms/pages/'.$fresh->getKey().'/delete-'.now()->format('YmdHis').'-'.Str::random(8).'.json';
+            $path = 'phi-cms/pages/' . $fresh->getKey() . '/delete-' . now()->format('YmdHis') . '-' . Str::random(8) . '.json';
             if (! Storage::disk('local')->put($path, json_encode($export, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 'private')) {
                 throw new PageConflict('The recovery export could not be written; the Page was not deleted.');
             }
@@ -466,7 +466,7 @@ final class PageContent
         if ($fresh->page_version === null) {
             $unknownPageFields = array_diff(array_keys($fresh->getRawOriginal()), ['id', 'title', 'slug', 'description', 'route', 'status', 'published_at', 'created_at', 'updated_at', 'template', 'draft_fields', 'page_version']);
             if ($unknownPageFields !== []) {
-                throw new PageConflict('Unknown Page fields require a preservation contract: '.implode(', ', $unknownPageFields));
+                throw new PageConflict('Unknown Page fields require a preservation contract: ' . implode(', ', $unknownPageFields));
             }
             $orders = array_column($assignments, 'order_column');
             if (count($orders) !== count(array_unique($orders)) || in_array(null, $orders, true)) {
@@ -474,7 +474,7 @@ final class PageContent
             }
             $unknownColumns = array_diff(array_keys($assignments[0] ?? []), ['id', 'page_id', 'section_id', 'order_column', 'stage', 'occurrence_id', 'slot', 'created_at', 'updated_at']);
             if ($unknownColumns !== []) {
-                throw new PageConflict('Unknown assignment fields require a preservation contract: '.implode(', ', $unknownColumns));
+                throw new PageConflict('Unknown assignment fields require a preservation contract: ' . implode(', ', $unknownColumns));
             }
             if (DB::table('metatags')->where('metatable_type', $fresh->getMorphClass())->where('metatable_id', $fresh->getKey())->count() > 1) {
                 throw new PageConflict('Multiple Page metatag rows require explicit reconciliation before adoption.');
@@ -662,7 +662,7 @@ final class PageContent
         }
         if ($requireRequired) {
             foreach ($composition['required'] as $required) {
-                $matching = array_filter($rows, function (array|Section $row) use ($required): bool {
+                $matching = array_filter($rows, function (array | Section $row) use ($required): bool {
                     $section = $row instanceof Section ? $row : ($row['section'] ?? $row);
 
                     return $section instanceof Section
@@ -708,7 +708,7 @@ final class PageContent
         $allowed = ['title', 'slug', 'description', 'template', 'metatags'];
         $unknown = array_diff(array_keys($fields), $allowed);
         if ($unknown !== []) {
-            throw ValidationException::withMessages(['fields' => 'Unknown Page fields: '.implode(', ', $unknown).'.']);
+            throw ValidationException::withMessages(['fields' => 'Unknown Page fields: ' . implode(', ', $unknown) . '.']);
         }
         foreach ($allowed as $key) {
             if (! array_key_exists($key, $fields)) {
@@ -734,7 +734,7 @@ final class PageContent
         if (is_array($fields['metatags'])) {
             $unknownMeta = array_diff(array_keys($fields['metatags']), self::METATAG_KEYS);
             if ($unknownMeta !== []) {
-                throw ValidationException::withMessages(['fields.metatags' => 'Unknown SEO fields: '.implode(', ', $unknownMeta).'.']);
+                throw ValidationException::withMessages(['fields.metatags' => 'Unknown SEO fields: ' . implode(', ', $unknownMeta) . '.']);
             }
             foreach (self::METATAG_KEYS as $key) {
                 if (! array_key_exists($key, $fields['metatags'])) {
@@ -1026,7 +1026,7 @@ final class PageContent
         }
     }
 
-    private function authorize(string $ability, Page|Section $record): void
+    private function authorize(string $ability, Page | Section $record): void
     {
         $actor = auth()->user()?->fresh();
         abort_if($actor === null, 403);
@@ -1064,7 +1064,7 @@ final class PageContent
 
     private function reviewKey(Page $page): string
     {
-        return 'phi-cms.reviews.pages.'.$page->getKey();
+        return 'phi-cms.reviews.pages.' . $page->getKey();
     }
 
     private function transaction(Closure $operation): mixed
