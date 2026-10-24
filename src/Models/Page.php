@@ -2,14 +2,17 @@
 
 namespace JFA\PhiCmsCore\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\PageStatus;
+use JFA\PhiCmsCore\Pages\PageMutation;
 use JFA\PhiCmsCore\Sections\SectionConflict;
 
 /**
@@ -20,13 +23,43 @@ class Page extends Model
 {
     use HasFactory;
 
+    protected $fillable = [
+        'title',
+        'slug',
+        'description',
+        'status',
+        'route',
+        'published_at',
+        'template',
+        'draft_fields',
+        'page_version',
+    ];
+
     public function save(array $options = []): bool
     {
+        if ($this->exists && ! PageMutation::allowed() && $this->getOriginal('page_version') !== null && $this->isDirty([
+            'title',
+            'slug',
+            'description',
+            'status',
+            'route',
+            'published_at',
+            'template',
+            'draft_fields',
+            'page_version',
+        ])) {
+            throw ValidationException::withMessages(['page' => 'Adopted Pages must be changed through the Page draft workflow.']);
+        }
+
         return $this->withSectionLocks(fn (): bool => parent::save($options));
     }
 
     public function delete(): ?bool
     {
+        if ($this->exists && ! PageMutation::allowed() && $this->getOriginal('page_version') !== null) {
+            throw ValidationException::withMessages(['page' => 'Adopted Pages must be deleted through the Page workflow.']);
+        }
+
         return $this->withSectionLocks(fn (): ?bool => parent::delete());
     }
 
@@ -55,11 +88,17 @@ class Page extends Model
             'id' => 'integer',
             'published_at' => 'datetime',
             'status' => PageStatus::class,
+            'draft_fields' => 'array',
+            'page_version' => 'integer',
         ];
     }
 
     public function publish(): void
     {
+        if ($this->page_version !== null) {
+            throw ValidationException::withMessages(['page' => 'Adopted Pages must be published through the reviewed Page workflow.']);
+        }
+
         $this->status = PageStatus::PUBLISHED;
         $this->published_at = now();
         $this->save();
@@ -67,6 +106,10 @@ class Page extends Model
 
     public function unpublish(): void
     {
+        if ($this->page_version !== null) {
+            throw ValidationException::withMessages(['page' => 'Adopted Pages must be unpublished through the Page workflow.']);
+        }
+
         $this->status = PageStatus::DRAFT;
         $this->published_at = null;
         $this->save();
@@ -77,7 +120,37 @@ class Page extends Model
     {
         return $this->belongsToMany(Section::class)
             ->using(PageSection::class)
-            ->withPivot('order_column');
+            ->wherePivot('stage', 'published')
+            ->withPivot(['id', 'order_column', 'stage', 'occurrence_id', 'slot'])
+            ->orderByPivot('order_column')
+            ->orderByPivot('id');
+    }
+
+    /** @return BelongsToMany<Section, $this, PageSection> */
+    public function draftSections(): BelongsToMany
+    {
+        return $this->belongsToMany(Section::class)
+            ->using(PageSection::class)
+            ->wherePivot('stage', 'draft')
+            ->withPivot(['id', 'order_column', 'stage', 'occurrence_id', 'slot'])
+            ->orderByPivot('order_column')
+            ->orderByPivot('id');
+    }
+
+    /** @return HasMany<PageSection, $this> */
+    public function draftSectionAssignments(): HasMany
+    {
+        return $this->hasMany(PageSection::class)
+            ->where('stage', 'draft')
+            ->with('section')
+            ->orderBy('order_column')
+            ->orderBy('id');
+    }
+
+    /** @return HasMany<PageUrl, $this> */
+    public function urls(): HasMany
+    {
+        return $this->hasMany(PageUrl::class);
     }
 
     public function metatags(): MorphOne
@@ -90,26 +163,17 @@ class Page extends Model
         return $this->sections()->count() > 0;
     }
 
-    public function scopePublished($query)
+    public function scopePublished(Builder $query): Builder
     {
         return $query->where('status', PageStatus::PUBLISHED);
     }
 
-    public static function bySlug($slug)
+    public static function bySlug(string $slug): self
     {
-        $cacheKey = 'page-id-' . $slug;
-
-        $pageId = Cache::remember($cacheKey, now()->addDay(), function () use ($slug) {
-            $page = self::where('slug', $slug)->published()
-                ->firstOrFail();
-
-            return $page->id;
-        });
-
-        return self::where('id', $pageId)
-            ->with('sections', function ($query) {
-                $query->orderBy('order_column');
-            })
+        return self::query()
+            ->where('slug', $slug)
+            ->published()
+            ->with(['metatags', 'sections'])
             ->firstOrFail();
     }
 }

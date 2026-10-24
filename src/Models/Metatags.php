@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 class Metatags extends Model
 {
     protected $fillable = [
+        'metatable_type',
+        'metatable_id',
         'title',
         'description',
         'og_title',

@@ -85,7 +85,15 @@ class Section extends ContentModel
                 return null;
             }
             if ($current->content_version !== null || $current->draft_content !== null || $current->published_content !== null) {
-                $usages = $current->pages()->orderBy('pages.id')->pluck('pages.title')->implode(', ');
+                $usages = DB::table('page_section')
+                    ->join('pages', 'pages.id', '=', 'page_section.page_id')
+                    ->where('page_section.section_id', $current->id)
+                    ->orderBy('pages.id')
+                    ->orderBy('page_section.stage')
+                    ->orderBy('page_section.order_column')
+                    ->pluck('pages.title')
+                    ->unique()
+                    ->implode(', ');
 
                 throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.recovery_protected_section_delete', [
                     'usages' => $usages ?: __('phi-cms-core::phi-cms-core.none'),
@@ -118,6 +126,22 @@ class Section extends ContentModel
     /** @return BelongsToMany<Page, $this, PageSection> */
     public function pages(): BelongsToMany
     {
-        return $this->belongsToMany(Page::class)->using(PageSection::class)->withPivot('order_column');
+        return $this->belongsToMany(Page::class)
+            ->using(PageSection::class)
+            ->wherePivot('stage', 'published')
+            ->withPivot(['id', 'order_column', 'stage', 'occurrence_id', 'slot'])
+            ->orderByPivot('order_column')
+            ->orderByPivot('id');
+    }
+
+    /** @return BelongsToMany<Page, $this, PageSection> */
+    public function draftPages(): BelongsToMany
+    {
+        return $this->belongsToMany(Page::class)
+            ->using(PageSection::class)
+            ->wherePivot('stage', 'draft')
+            ->withPivot(['id', 'order_column', 'stage', 'occurrence_id', 'slot'])
+            ->orderByPivot('order_column')
+            ->orderByPivot('id');
     }
 }

@@ -2,18 +2,111 @@
     x-data
     x-on:phi-section-editor-focus="$nextTick(() => $refs.editorForm?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus())">
     <header>
-        <h1 class="text-2xl font-semibold">{{ __('phi-cms-core::workflow.preview') }}</h1>
-        <p>{{ __('phi-cms-core::workflow.preview_help') }}</p>
+        <h1 class="text-2xl font-semibold">{{ $pageMode ? 'Page draft preview' : __('phi-cms-core::workflow.preview') }}</h1>
+        <p>{{ $pageMode ? 'This private canvas uses the saved Page draft. Public output remains unchanged until the Page is published.' : __('phi-cms-core::workflow.preview_help') }}</p>
     </header>
     <div class="grid gap-6 xl:grid-cols-3">
         @if ($page)
             <div class="min-w-0 xl:col-span-2" aria-label="{{ __('phi-cms-core::workflow.canvas') }}">
-                @include($pageView, ['page' => $page, 'sections' => $sections, 'preview' => true])
+                @include($pageTemplateView, ['page' => $page, 'sections' => $sections, 'preview' => true])
             </div>
         @endif
         <aside class="min-w-0 space-y-6" aria-label="{{ __('phi-cms-core::workflow.editor') }}">
             @error('workflow') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
             @error('data') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
+            @if ($pageMode)
+                <section class="space-y-4 rounded border border-gray-300 p-4" aria-label="Page draft editor">
+                    <div>
+                        <h2 class="text-xl font-semibold">Page fields</h2>
+                        <p class="text-sm text-gray-600 dark:text-gray-300">Save Page draft and Publish Page are independent from Section publication.</p>
+                    </div>
+                    @error('fields') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
+                    <label class="block text-sm font-medium">Title
+                        <input type="text" wire:model="pageData.title" class="mt-1 block w-full rounded border-gray-300" />
+                    </label>
+                    <label class="block text-sm font-medium">Slug
+                        <input type="text" wire:model="pageData.slug" class="mt-1 block w-full rounded border-gray-300" />
+                    </label>
+                    <label class="block text-sm font-medium">Description
+                        <textarea wire:model="pageData.description" class="mt-1 block w-full rounded border-gray-300"></textarea>
+                    </label>
+                    <p class="text-sm text-gray-600 dark:text-gray-300">Template: <strong>{{ $pageData['template'] ?? 'Unavailable' }}</strong></p>
+                    @if (is_array($pageData['metatags'] ?? null))
+                        <details>
+                            <summary class="cursor-pointer text-sm font-medium">Text SEO</summary>
+                            <div class="mt-3 space-y-3">
+                                @foreach (['title', 'description', 'og_title', 'og_description', 'twitter_title', 'twitter_card', 'twitter_description', 'robots'] as $metaKey)
+                                    <label class="block text-sm font-medium">{{ str($metaKey)->replace('_', ' ')->title() }}
+                                        <input type="text" wire:model="pageData.metatags.{{ $metaKey }}" class="mt-1 block w-full rounded border-gray-300" />
+                                    </label>
+                                @endforeach
+                                <p class="text-xs text-gray-500">SEO image references are preserved and read-only in this workflow.</p>
+                            </div>
+                        </details>
+                    @else
+                        <p class="text-xs text-gray-500">No SEO relationship is currently present; this workflow does not invent one.</p>
+                    @endif
+                    @if ($canUpdatePage)
+                        <x-filament::button wire:click="savePageDraft" wire:loading.attr="disabled">Save Page draft</x-filament::button>
+                    @endif
+                    <x-filament::button color="gray" wire:click="reloadLatest" wire:confirm="Reload the latest saved Page draft?">Reload latest</x-filament::button>
+                </section>
+
+                <section class="space-y-4 rounded border border-gray-300 p-4" aria-label="Draft sections">
+                    <div>
+                        <h2 class="text-xl font-semibold">Draft sections</h2>
+                        <p class="text-sm text-gray-600 dark:text-gray-300">Reordering and additions are saved as Page draft assignments. Repeated Section identities remain separate occurrences.</p>
+                    </div>
+                    @foreach ($pageRows as $index => $row)
+                        @php($rowSection = collect($sections)->first(fn ($section): bool => (int) $section->getKey() === (int) $row['section_id']))
+                        <div wire:key="page-assignment-{{ $row['pivot_id'] ?: 'new-'.$index }}" class="flex items-center justify-between gap-2 rounded border border-gray-200 p-2">
+                            <span class="text-sm">{{ $rowSection?->title ?? 'Selected Section '.$row['section_id'] }} <span class="text-gray-500">({{ $rowSection?->type ?? 'unavailable' }})</span></span>
+                            @if ($row['pivot_id'])
+                                <span class="flex gap-1">
+                                    <x-filament::button size="sm" color="gray" wire:click="movePageSection({{ $row['pivot_id'] }}, 'up')">↑</x-filament::button>
+                                    <x-filament::button size="sm" color="gray" wire:click="movePageSection({{ $row['pivot_id'] }}, 'down')">↓</x-filament::button>
+                                    <x-filament::button size="sm" color="danger" wire:click="removePageSection({{ $row['pivot_id'] }})">Remove</x-filament::button>
+                                </span>
+                            @endif
+                        </div>
+                    @endforeach
+                    @if ($canComposePage && count($selectableSections) > 0)
+                        <label class="block text-sm font-medium">Add existing adopted Section
+                            <select wire:change="addPageSection($event.target.value)" class="mt-1 block w-full rounded border-gray-300">
+                                <option value="">Choose a Section</option>
+                                @foreach ($selectableSections as $selectableSection)
+                                    <option value="{{ $selectableSection->id }}">{{ $selectableSection->title }} — {{ $selectableSection->type }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                    @endif
+                    @if ($canComposePage)
+                        <x-filament::button wire:click="savePageComposition">Save composition</x-filament::button>
+                    @endif
+                </section>
+
+                @if ($canPublishPage)
+                    <section class="space-y-3 rounded border border-gray-300 p-4" aria-label="Page publication">
+                        <h2 class="text-xl font-semibold">Page publication</h2>
+                        <p class="text-sm">Review shows the prospective public Page using currently published Section content. It never publishes a Section draft.</p>
+                        <x-filament::button color="gray" wire:click="reviewPagePublication">Review Page publication</x-filament::button>
+                        @if ($pageReview)
+                            <div class="space-y-2 border-t border-gray-200 pt-3">
+                                <p class="text-sm font-medium">{{ $pageReview['prospective_result']['title'] }} — {{ $pageReview['prospective_result']['slug'] }}</p>
+                                <ul class="text-sm">
+                                    @foreach ($pageReview['sections'] as $reviewSection)
+                                        <li wire:key="page-review-{{ $reviewSection['occurrence_id'] }}">
+                                            {{ $reviewSection['title'] }} — {{ $reviewSection['source'] }}
+                                            @if (! $reviewSection['available']) <span class="text-red-700">unavailable</span> @endif
+                                        </li>
+                                    @endforeach
+                                </ul>
+                                <x-filament::button wire:click="publishPage">Publish Page</x-filament::button>
+                            </div>
+                        @endif
+                    </section>
+                @endif
+            @endif
             @if ($pendingSectionId)
                 <div role="group" aria-label="{{ __('phi-cms-core::workflow.unsaved') }}" class="space-y-3 rounded border border-gray-400 p-4">
                     <p>{{ __('phi-cms-core::workflow.switch_help') }}</p>

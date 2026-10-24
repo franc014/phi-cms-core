@@ -45,4 +45,9 @@ final class SectionRegistry
     {
         return $this->definitions[$key] ?? throw new InvalidArgumentException("Missing Section definition: {$key}.");
     }
+
+    public function has(string $key): bool
+    {
+        return isset($this->definitions[$key]);
+    }
 }

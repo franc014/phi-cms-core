@@ -12,6 +12,8 @@ use JFA\PhiCmsCore\Enums\SectionStatus;
 use JFA\PhiCmsCore\Forms\Components\Image;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
+use JFA\PhiCmsCore\Pages\PageConflict;
+use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Sections\SectionConflict;
 use JFA\PhiCmsCore\Sections\SectionContent;
 use JFA\PhiCmsCore\Sections\SectionImageContext;
@@ -89,8 +91,25 @@ class Preview extends FormsComponent
     #[Locked]
     public ?int $version = null;
 
+    #[Locked]
+    public bool $pageMode = false;
+
     /** @var array<string, mixed> */
     public array $data = [];
+
+    /** @var array<string, mixed> */
+    public array $pageData = [];
+
+    /** @var array<string, mixed> */
+    #[Locked]
+    public array $pageBaseline = [];
+
+    /** @var list<array{pivot_id: int|null, section_id: int, slot: int|null}> */
+    public array $pageRows = [];
+
+    /** @var array<string, mixed>|null */
+    #[Locked]
+    public ?array $pagePublicationReview = null;
 
     /** @var array<string, mixed> */
     #[Locked]
@@ -108,9 +127,12 @@ class Preview extends FormsComponent
         $this->pageId = $pageId;
         $this->pageView = $pageView;
         $this->sectionId = $sectionId;
+        $this->pageMode = $pageId !== null && Page::query()->whereKey($pageId)->value('page_version') !== null;
         $this->ensureContext();
 
-        if ($sectionId !== null) {
+        if ($this->pageMode) {
+            $this->loadPage();
+        } elseif ($sectionId !== null) {
             $this->loadSection($sectionId);
         }
     }
@@ -123,6 +145,10 @@ class Preview extends FormsComponent
     public function selectSection(int $sectionId): void
     {
         abort_if($this->pageId === null, 403);
+        if ($this->pageMode) {
+            $section = $this->authorizedSection($sectionId);
+            abort_if($section->content_version === null, 403);
+        }
         $this->authorizedSection($sectionId);
 
         if ($this->sectionId !== $sectionId && $this->isDirty()) {
@@ -162,6 +188,12 @@ class Preview extends FormsComponent
 
     public function saveDraft(): void
     {
+        if ($this->pageMode) {
+            $this->savePageDraft();
+
+            return;
+        }
+
         try {
             $this->persistDraft();
         } finally {
@@ -171,7 +203,123 @@ class Preview extends FormsComponent
 
     public function reloadLatest(): void
     {
+        if ($this->pageMode) {
+            $this->loadPage();
+
+            return;
+        }
         $this->loadSection($this->selectedSection()->id);
+    }
+
+    public function savePageDraft(): void
+    {
+        abort_unless($this->pageMode && $this->pageId !== null, 403);
+
+        try {
+            $this->version = app(PageContent::class)->saveDraft(Page::findOrFail($this->pageId), $this->pageData, (int) $this->version);
+            $this->pageBaseline = $this->pageData;
+            $this->pagePublicationReview = null;
+            $this->resetErrorBag();
+            $this->dispatch('phi-page-editor-focus');
+        } catch (PageConflict $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', $exception->getMessage());
+        }
+    }
+
+    public function savePageComposition(): void
+    {
+        abort_unless($this->pageMode && $this->pageId !== null, 403);
+
+        try {
+            $this->version = app(PageContent::class)->saveDraftSections(Page::findOrFail($this->pageId), $this->pageRows, (int) $this->version);
+            $this->pagePublicationReview = null;
+            $this->loadPage();
+            $this->resetErrorBag();
+        } catch (PageConflict $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', $exception->getMessage());
+        }
+    }
+
+    public function addPageSection(int $sectionId): void
+    {
+        abort_unless($this->pageMode, 403);
+        $this->pageRows[] = ['pivot_id' => null, 'section_id' => $sectionId, 'slot' => null];
+        $this->savePageComposition();
+    }
+
+    public function removePageSection(int $pivotId): void
+    {
+        abort_unless($this->pageMode, 403);
+        $this->pageRows = array_values(array_filter($this->pageRows, fn (array $row): bool => (int) $row['pivot_id'] !== $pivotId));
+        $this->savePageComposition();
+    }
+
+    public function movePageSection(int $pivotId, string $direction): void
+    {
+        abort_unless($this->pageMode && in_array($direction, ['up', 'down'], true), 403);
+        $index = collect($this->pageRows)->search(fn (array $row): bool => (int) $row['pivot_id'] === $pivotId);
+        if ($index === false) {
+            abort(404);
+        }
+        $target = $direction === 'up' ? $index - 1 : $index + 1;
+        if ($target < 0 || $target >= count($this->pageRows)) {
+            return;
+        }
+        [$this->pageRows[$index], $this->pageRows[$target]] = [$this->pageRows[$target], $this->pageRows[$index]];
+        $this->savePageComposition();
+    }
+
+    public function reviewPagePublication(): void
+    {
+        abort_unless($this->pageMode && $this->pageId !== null, 403);
+        if ($this->isDirty()) {
+            $this->addError('workflow', __('phi-cms-core::workflow.unsaved'));
+
+            return;
+        }
+
+        try {
+            $this->pagePublicationReview = app(PageContent::class)->review(Page::findOrFail($this->pageId), (int) $this->version);
+            $this->resetErrorBag('workflow');
+        } catch (PageConflict $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', $exception->getMessage());
+        }
+    }
+
+    public function publishPage(): void
+    {
+        abort_unless($this->pageMode && $this->pageId !== null, 403);
+        if ($this->isDirty() || $this->pagePublicationReview === null || ! is_string($this->pagePublicationReview['token'] ?? null)) {
+            $this->addError('workflow', __('phi-cms-core::workflow.review_required'));
+
+            return;
+        }
+
+        try {
+            $this->version = app(PageContent::class)->publish(Page::findOrFail($this->pageId), (int) $this->version, $this->pagePublicationReview['token']);
+            $this->pagePublicationReview = null;
+            $this->loadPage();
+            $this->resetErrorBag();
+        } catch (PageConflict $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', $exception->getMessage());
+        }
+    }
+
+    public function unpublishPage(): void
+    {
+        abort_unless($this->pageMode && $this->pageId !== null, 403);
+
+        try {
+            $this->version = app(PageContent::class)->unpublish(Page::findOrFail($this->pageId), (int) $this->version);
+            $this->loadPage();
+            $this->resetErrorBag();
+        } catch (PageConflict $exception) {
+            $this->addError('workflow', $exception->getMessage());
+        }
     }
 
     public function reviewPublication(): void
@@ -233,12 +381,35 @@ class Preview extends FormsComponent
     public function render(): View
     {
         $this->ensureContext();
+        if ($this->pageMode) {
+            $page = app(PageContent::class)->previewPage(Page::findOrFail($this->pageId));
+            $sections = collect(app(PageContent::class)->previewSections($page));
+            $selectedSection = $this->sectionId === null ? null : $this->selectedSection();
+
+            return view('phi-cms-core::livewire.preview', [
+                'page' => $page,
+                'sections' => $sections,
+                'preview' => true,
+                'selectedSection' => $selectedSection,
+                'canUpdate' => $selectedSection !== null && $this->allows('update', $selectedSection),
+                'canPublish' => $selectedSection !== null && $this->allows('publish', $selectedSection),
+                'pageTemplateView' => app(PageContent::class)->templateView($page, true),
+                'pageData' => $this->pageData,
+                'pageRows' => $this->pageRows,
+                'pageReview' => $this->pagePublicationReview,
+                'canUpdatePage' => auth()->user()?->fresh()?->can('update', $page) ?? false,
+                'canComposePage' => auth()->user()?->fresh()?->can('compose', $page) ?? false,
+                'canPublishPage' => auth()->user()?->fresh()?->can('publish', $page) ?? false,
+                'selectableSections' => app(PageContent::class)->selectableSections($page),
+            ]);
+        }
         $page = $this->pageId === null ? null : $this->content()->authorizePage(Page::findOrFail($this->pageId));
         $sections = $page?->sections()->where('status', SectionStatus::ACTIVE)->orderByPivot('order_column')->get() ?? collect();
         $section = $this->sectionId === null ? null : $this->selectedSection();
 
         return view('phi-cms-core::livewire.preview', [
             'page' => $page, 'sections' => $sections, 'preview' => true,
+            'pageTemplateView' => $this->pageView,
             'selectedSection' => $section,
             'canUpdate' => $section !== null && $this->allows('update', $section),
             'canPublish' => $section !== null && $this->allows('publish', $section),
@@ -344,6 +515,9 @@ class Preview extends FormsComponent
 
     private function isDirty(): bool
     {
+        if ($this->pageMode) {
+            return $this->pageData !== $this->pageBaseline;
+        }
         if ($this->sectionId === null) {
             return false;
         }
@@ -388,8 +562,16 @@ class Preview extends FormsComponent
     {
         $section = Section::findOrFail($sectionId);
         if ($this->pageId !== null) {
-            $page = $this->content()->authorizePage(Page::findOrFail($this->pageId));
-            abort_unless($page->sections()->whereKey($sectionId)->where('status', SectionStatus::ACTIVE)->exists(), 403);
+            if ($this->pageMode) {
+                $page = app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
+                abort_unless($page->draftSections()->whereKey($sectionId)->where('status', SectionStatus::ACTIVE)->exists(), 403);
+            } else {
+                $page = $this->content()->authorizePage(Page::findOrFail($this->pageId));
+                abort_unless($page->sections()->whereKey($sectionId)->where('status', SectionStatus::ACTIVE)->exists(), 403);
+            }
+        }
+        if ($this->pageMode && $section->content_version === null) {
+            return $section;
         }
         $this->content()->draft($section);
 
@@ -401,8 +583,12 @@ class Preview extends FormsComponent
         request()->attributes->set('phi-cms.private', true);
         abort_unless(config('phi-cms.editing', false), 403);
         if ($this->pageId !== null) {
-            $this->content()->authorizePage(Page::findOrFail($this->pageId));
-            abort_unless($this->pageView !== null && view()->exists($this->pageView), 404);
+            if ($this->pageMode) {
+                app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
+            } else {
+                $this->content()->authorizePage(Page::findOrFail($this->pageId));
+                abort_unless($this->pageView !== null && view()->exists($this->pageView), 404);
+            }
         } else {
             abort_if($this->sectionId === null || $this->pageView !== null, 403);
         }
@@ -414,6 +600,34 @@ class Preview extends FormsComponent
                 $this->pageId === null ? null : Page::findOrFail($this->pageId),
                 preview: true,
             );
+        }
+    }
+
+    private function loadPage(): void
+    {
+        abort_unless($this->pageId !== null, 403);
+        $page = Page::findOrFail($this->pageId);
+        $metadata = app(PageContent::class)->preview($page);
+        $this->version = $metadata['version'];
+        $this->pageData = [
+            'title' => $metadata['title'],
+            'slug' => $metadata['slug'],
+            'description' => $metadata['description'],
+            'template' => $metadata['template'],
+            'metatags' => $metadata['metatags'],
+        ];
+        $this->pageBaseline = $this->pageData;
+        $this->pageRows = collect(app(PageContent::class)->previewSections($page))
+            ->map(fn (Section $section): array => [
+                'pivot_id' => (int) $section->pivot->id,
+                'section_id' => (int) $section->getKey(),
+                'slot' => $section->pivot->slot === null ? null : (int) $section->pivot->slot,
+            ])->values()->all();
+        $this->pagePublicationReview = null;
+        if ($this->sectionId !== null) {
+            $this->sectionId = null;
+            $this->data = [];
+            $this->baseline = [];
         }
     }
 

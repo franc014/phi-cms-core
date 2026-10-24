@@ -43,7 +43,8 @@ final class SectionContent
             request()->attributes->set('phi-cms.private', true);
             $columns[] = 'draft_content';
         }
-        $sections = $freshPage->sections()->where('sections.status', SectionStatus::ACTIVE)
+        $relationship = $preview && $freshPage->page_version !== null ? $freshPage->draftSections() : $freshPage->sections();
+        $sections = $relationship->where('sections.status', SectionStatus::ACTIVE)
             ->where(function (Builder $query) use ($preview): void {
                 $query->whereNotNull('content_version');
                 if (! $preview) {
@@ -56,11 +57,19 @@ final class SectionContent
             if (isset($rendered[$section->id])) {
                 continue;
             }
-            if ($preview) {
+            if ($preview && $section->content_version !== null) {
                 abort_if($actor === null, 403);
-                Gate::forUser($actor)->authorize('viewDraft', $section);
+                if (! Gate::forUser($actor)->allows('viewDraft', $section)) {
+                    if (! is_array($section->published_content)) {
+                        continue;
+                    }
+                    $snapshot = $section->published_content;
+                } else {
+                    $snapshot = $section->draft_content;
+                }
+            } else {
+                $snapshot = $preview ? $section->draft_content : $section->published_content;
             }
-            $snapshot = $preview ? $section->draft_content : $section->published_content;
             $rendered[$section->id] = ['view' => $this->registry->get($section->type)::view(), 'content' => $this->normalizeSnapshot($section, $snapshot, allowRecovery: ! $preview)];
         }
 
@@ -71,7 +80,8 @@ final class SectionContent
     public function preview(Page $page, Section $section): array
     {
         $this->authorizePage($page);
-        abort_unless($page->sections()->whereKey($section->getKey())->exists(), 403);
+        $relationship = $page->page_version !== null ? $page->draftSections() : $page->sections();
+        abort_unless($relationship->whereKey($section->getKey())->exists(), 403);
 
         return $this->draft($section);
     }
@@ -187,8 +197,8 @@ final class SectionContent
     private function usages(Section $section): array
     {
         return DB::table('page_section')->join('pages', 'pages.id', '=', 'page_section.page_id')
-            ->where('section_id', $section->id)->orderBy('pages.id')->orderBy('order_column')
-            ->select(['pages.id', 'pages.title', 'pages.slug', 'pages.status', 'pages.published_at', 'page_section.order_column'])
+            ->where('section_id', $section->id)->orderBy('pages.id')->orderBy('page_section.stage')->orderBy('order_column')
+            ->select(['pages.id', 'pages.title', 'pages.slug', 'pages.status', 'pages.published_at', 'page_section.id as assignment_id', 'page_section.stage', 'page_section.occurrence_id', 'page_section.order_column'])
             ->get()->map(fn (object $usage): array => (array) $usage)->all();
     }
 

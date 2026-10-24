@@ -24,6 +24,17 @@ class ManagePageSections extends ManageRelatedRecords
 
     protected static ?string $relatedResource = SectionResource::class;
 
+    /** @param array<string, mixed> $parameters */
+    public static function canAccess(array $parameters = []): bool
+    {
+        $record = $parameters['record'] ?? null;
+        if ($record instanceof Page && $record->page_version !== null) {
+            return false;
+        }
+
+        return parent::canAccess($parameters);
+    }
+
     public function table(Table $table): Table
     {
         return $table

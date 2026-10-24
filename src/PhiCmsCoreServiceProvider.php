@@ -11,12 +11,15 @@ use JFA\PhiCmsCore\Commands\GalleryCommand;
 use JFA\PhiCmsCore\Commands\GalleryDeleteMediaCommand;
 use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
 use JFA\PhiCmsCore\Commands\GuardedCleanCommand;
+use JFA\PhiCmsCore\Commands\PageCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
 use JFA\PhiCmsCore\Commands\ServicesCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Http\Middleware\AuthorizeSectionTemporaryPreview;
 use JFA\PhiCmsCore\Http\Middleware\PrivatePreviewResponse;
 use JFA\PhiCmsCore\Livewire\Preview;
+use JFA\PhiCmsCore\Pages\PageContent;
+use JFA\PhiCmsCore\Pages\PageRegistry;
 use JFA\PhiCmsCore\Schema\FieldFactory;
 use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
 use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
@@ -137,6 +140,11 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         $this->app->scoped(SectionImageContext::class);
         $this->app->singleton(SectionImages::class);
         $this->app->singleton(SectionRegistry::class, fn () => new SectionRegistry(config('phi-cms.sections', [])));
+        $this->app->singleton(PageRegistry::class, fn (): PageRegistry => new PageRegistry(
+            config('phi-cms.pages', []),
+            app(SectionRegistry::class),
+        ));
+        $this->app->scoped(PageContent::class);
 
         if (config('media-library.media_model') === Media::class) {
             config(['media-library.media_model' => Models\Media::class]);
@@ -271,6 +279,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             GenerateBlocksCommand::class,
             GalleryCommand::class,
             GalleryDeleteMediaCommand::class,
+            PageCommand::class,
             SeedCommand::class,
             ServicesCommand::class,
         ];
@@ -317,6 +326,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             'create_category_post_table',
             'add_content_snapshots_to_sections_table',
             'add_gallery_image_sources_to_sections_table',
+            'create_page_urls_table',
         ];
     }
 }

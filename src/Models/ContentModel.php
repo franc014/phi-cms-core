@@ -14,6 +14,20 @@ class ContentModel extends Model implements HasMedia
 {
     use InteractsWithMedia;
 
+    protected $fillable = [
+        'component_id',
+        'title',
+        'description',
+        'slug',
+        'type',
+        'content',
+        'status',
+        'draft_content',
+        'published_content',
+        'content_version',
+        'legacy_image_sources',
+    ];
+
     protected function casts(): array
     {
         return [

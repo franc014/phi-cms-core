@@ -85,9 +85,12 @@ function reviewedLocalImageForCoreTest(): array
         $table->timestamp('published_at')->nullable();
     });
     Schema::create('page_section', function (Blueprint $table): void {
+        $table->id();
         $table->unsignedBigInteger('page_id');
         $table->unsignedBigInteger('section_id');
         $table->integer('order_column');
+        $table->string('stage')->default('published');
+        $table->uuid('occurrence_id')->nullable();
     });
     $snapshot = ['title' => 'Public', 'cover' => null, 'cards' => [['photo' => 'source.jpg']]];
     $binding = ['kind' => 'disk', 'reference' => 'source.jpg', 'disk' => 'legacy', 'key' => 'source.jpg', 'root' => realpath($root), 'physical_path' => $path, 'url' => '/source.jpg', 'sha256' => hash_file('sha256', $path), 'bytes' => filesize($path)];
@@ -202,9 +205,12 @@ it('renders and independently publishes plain keyed content with only Core provi
         $table->timestamp('published_at')->nullable();
     });
     Schema::create('page_section', function (Blueprint $table): void {
+        $table->id();
         $table->unsignedBigInteger('page_id');
         $table->unsignedBigInteger('section_id');
         $table->integer('order_column');
+        $table->string('stage')->default('published');
+        $table->uuid('occurrence_id')->nullable();
     });
     DB::table('sections')->insert(['id' => 1, 'type' => 'plain', 'content_version' => 1, 'published_content' => json_encode(['title' => 'Public <text>']), 'draft_content' => json_encode(['title' => 'Private sentinel'])]);
     DB::table('users')->insert(['id' => 1, 'name' => 'Actor', 'email' => 'actor@example.test', 'password' => 'unused-test-credential']);

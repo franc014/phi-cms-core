@@ -7,6 +7,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 use JFA\PhiCmsCore\Enums\NavigationGroup;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Resources\Pages\Pages\ListPages;
@@ -33,6 +34,18 @@ class PageResource extends Resource
     public static function getPluralModelLabel(): string
     {
         return __('phi-cms-core::phi-cms-core.pages');
+    }
+
+    public static function canEdit(Model $record): bool
+    {
+        return ! ($record instanceof Page && $record->page_version !== null)
+            && parent::canEdit($record);
+    }
+
+    public static function canDelete(Model $record): bool
+    {
+        return ! ($record instanceof Page && $record->page_version !== null)
+            && parent::canDelete($record);
     }
 
     public static function form(Schema $schema): Schema

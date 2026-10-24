@@ -20,13 +20,17 @@ final class SectionView extends Component
 
     public SectionImageResolver $images;
 
+    public string $occurrence;
+
     public function __construct(
         SectionRenderer $renderer,
         public Section $section,
         public ?Page $page = null,
         public bool $preview = false,
-        public int $occurrence = 0,
+        ?string $occurrence = null,
     ) {
+        $this->occurrence = (string) ($section->pivot?->occurrence_id ?? $occurrence ?? 'legacy-' . $section->getKey());
+
         try {
             $rendered = $renderer->section($section, $page, $preview);
             $this->content = $rendered['content'];

@@ -8,10 +8,19 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::create('page_section', function (Blueprint $table) {
+            $table->id();
             $table->foreignId('section_id')->constrained()->cascadeOnDelete();
             $table->foreignId('page_id')->constrained()->cascadeOnDelete();
             $table->integer('order_column')->default(0);
+            $table->string('stage')->default('published');
+            $table->uuid('occurrence_id')->nullable();
+            $table->integer('slot')->nullable();
             $table->timestamps();
+
+            $table->unique(['page_id', 'stage', 'occurrence_id']);
+            $table->unique(['page_id', 'stage', 'slot']);
+            $table->index(['page_id', 'stage', 'order_column']);
+            $table->index(['section_id', 'stage']);
         });
     }
 

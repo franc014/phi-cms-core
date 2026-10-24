@@ -18,30 +18,32 @@ class PagesTable
         return [
             Action::make('publish')
                 ->label(__('phi-cms-core::phi-cms-core.publish'))
-                ->action(function ($record) {
+                ->authorize('publish')
+                ->action(function (Page $record): void {
                     $record->publish();
                 })
                 ->color('success')
                 ->icon(Heroicon::OutlinedArrowSmallUp)
-                ->hidden(function ($record) {
-                    return $record->status->value === 'published';
+                ->hidden(function (Page $record): bool {
+                    return $record->page_version !== null || $record->status->value === 'published';
                 }),
             Action::make('unpublish')
                 ->label(__('phi-cms-core::phi-cms-core.unpublish'))
-                ->action(function ($record) {
+                ->authorize('publish')
+                ->action(function (Page $record): void {
                     $record->unpublish();
                 })
                 ->icon(Heroicon::OutlinedArrowSmallDown)
                 ->color('warning')
-                ->hidden(function ($record) {
-                    return $record->status->value === 'draft';
+                ->hidden(function (Page $record): bool {
+                    return $record->page_version !== null || $record->status->value === 'draft';
                 }),
             Action::make('manageSections')
                 ->label(__('phi-cms-core::phi-cms-core.manage_sections'))
                 ->icon(Heroicon::OutlinedRectangleGroup)
                 ->color('accent')
-                ->visible(function (Page $record) {
-                    return $record->hasSections();
+                ->visible(function (Page $record): bool {
+                    return $record->page_version === null && $record->hasSections();
                 })
                 ->url(fn (Page $record): string => PageResource::getUrl('manageSections', ['record' => $record])),
         ];
@@ -86,7 +88,8 @@ class PagesTable
             ->filters([])
             ->recordActions([
                 ...self::customActions(),
-                EditAction::make(),
+                EditAction::make()
+                    ->visible(fn (Page $record): bool => $record->page_version === null),
             ])
             ->toolbarActions([
                 BulkActionGroup::make([]),

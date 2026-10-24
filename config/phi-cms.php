@@ -2,6 +2,7 @@
 
 return [
     'sections' => [],
+    'pages' => [],
     'editing' => false,
     'images' => [
         'collection' => 'phi-section-images',
