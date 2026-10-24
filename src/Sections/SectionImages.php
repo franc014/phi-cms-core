@@ -175,6 +175,8 @@ final class SectionImages
                 if ($media === null || ! $this->hasOriginal($media)) {
                     throw ValidationException::withMessages([$reference['path'] => 'The selected image is unavailable. Retry the upload.']);
                 }
+            } elseif (! $this->legacyOriginalReady($section, $reference['reference'])) {
+                throw ValidationException::withMessages([$reference['path'] => 'The adopted image original is unavailable or has changed. Restore the verified source before publishing.']);
             }
         }
     }
@@ -443,11 +445,26 @@ final class SectionImages
                 && (! isset($candidate['editor']) || session('phi-cms.upload-editors.' . $candidate['editor']) === ($candidate['token'] ?? null));
         }
 
-        if (filter_var($reference, FILTER_VALIDATE_URL) !== false && in_array(parse_url($reference, PHP_URL_SCHEME), ['http', 'https'], true)) {
-            return $this->legacyBinding($section, $reference) !== null || $this->referenceInSnapshot($section, $reference);
+        if ($this->isExternalReference($reference)) {
+            $binding = $this->legacyBinding($section, $reference);
+
+            if ($binding === null) {
+                // An intentional URL selected through the native editor has no
+                // adoption binding. It is preserved byte-for-byte and is never
+                // fetched by the server.
+                return true;
+            }
+
+            return ($binding['kind'] ?? null) === 'external' && ($binding['url'] ?? null) === $reference;
         }
 
         return $this->legacyBinding($section, $reference) !== null || $this->referenceInSnapshot($section, $reference);
+    }
+
+    private function isExternalReference(string $reference): bool
+    {
+        return filter_var($reference, FILTER_VALIDATE_URL) !== false
+            && in_array(parse_url($reference, PHP_URL_SCHEME), ['http', 'https'], true);
     }
 
     private function referenceInSnapshot(Section $section, string $reference): bool
@@ -468,6 +485,53 @@ final class SectionImages
         $binding = $this->legacyBinding($section, $reference);
 
         return is_string($binding['url'] ?? null) ? $binding['url'] : $reference;
+    }
+
+    private function legacyOriginalReady(Section $section, string $reference): bool
+    {
+        $binding = $this->legacyBinding($section, $reference);
+        $isExternal = $this->isExternalReference($reference);
+
+        if (($binding['kind'] ?? null) === 'external') {
+            return $isExternal && ($binding['url'] ?? null) === $reference;
+        }
+
+        if ($binding === null) {
+            // An intentional URL selected through the native editor has no
+            // adoption binding. It is preserved byte-for-byte and never fetched.
+            return $isExternal;
+        }
+
+        if (! in_array($binding['kind'] ?? null, ['disk', 'static'], true)
+            || ! is_string($binding['root'] ?? null) || ! is_string($binding['physical_path'] ?? null)
+            || ! is_string($binding['url'] ?? null) || ! is_string($binding['sha256'] ?? null)) {
+            return false;
+        }
+
+        clearstatcache();
+        $root = realpath($binding['root']);
+        $path = realpath($binding['physical_path']);
+        if ($root !== $binding['root'] || $path !== $binding['physical_path']
+            || ! str_starts_with($path, $root . DIRECTORY_SEPARATOR) || ! is_file($path) || ! is_readable($path)) {
+            return false;
+        }
+
+        if ($binding['kind'] === 'disk') {
+            $configuration = config('filesystems.disks.' . ($binding['disk'] ?? ''), []);
+            if (($configuration['driver'] ?? null) !== 'local'
+                || realpath($configuration['root'] ?? '') !== $root
+                || ! is_string($binding['key'] ?? null)
+                || realpath($root . DIRECTORY_SEPARATOR . $binding['key']) !== $path) {
+                return false;
+            }
+        }
+
+        $urlPath = parse_url($binding['url'], PHP_URL_PATH);
+
+        return is_string($urlPath)
+            && realpath(public_path(ltrim(rawurldecode($urlPath), '/'))) === $path
+            && hash_file('sha256', $path) === $binding['sha256']
+            && filesize($path) === ($binding['bytes'] ?? null);
     }
 
     private function hasOriginal(Media $media): bool
