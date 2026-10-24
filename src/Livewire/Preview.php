@@ -191,6 +191,10 @@ class Preview extends FormsComponent
         } catch (SectionConflict $exception) {
             $this->publicationReview = null;
             $this->addError('workflow', $exception->getMessage());
+        } catch (ValidationException $exception) {
+            $this->publicationReview = null;
+
+            throw ValidationException::withMessages($this->formValidationErrors($exception));
         }
     }
 
@@ -212,6 +216,10 @@ class Preview extends FormsComponent
         } catch (SectionConflict $exception) {
             $this->publicationReview = null;
             $this->addError('workflow', $exception->getMessage());
+        } catch (ValidationException $exception) {
+            $this->publicationReview = null;
+
+            throw ValidationException::withMessages($this->formValidationErrors($exception));
         }
     }
 
@@ -256,13 +264,63 @@ class Preview extends FormsComponent
 
             return false;
         } catch (ValidationException $exception) {
-            $messages = [];
-            foreach ($exception->errors() as $key => $errors) {
-                $messages[preg_replace('/^content(?=\.|$)/', 'data', $key)] = $errors;
+            throw ValidationException::withMessages($this->formValidationErrors($exception));
+        }
+    }
+
+    /**
+     * The native form keeps associative repeater keys while validation runs on
+     * the canonical list snapshot. Translate both the content prefix and those
+     * positional keys so refusals land on the image control the editor used.
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function formValidationErrors(ValidationException $exception): array
+    {
+        $messages = [];
+
+        foreach ($exception->errors() as $key => $errors) {
+            $path = preg_replace('/^content(?=\.|$)/', 'data', $key);
+            $messages[$this->formStatePath($path)] = $errors;
+        }
+
+        return $messages;
+    }
+
+    private function formStatePath(string $path): string
+    {
+        $segments = explode('.', $path);
+        $state = $this->data;
+        $mapped = [array_shift($segments)];
+
+        foreach ($segments as $index => $segment) {
+            if (! is_array($state)) {
+                return implode('.', [...$mapped, ...array_slice($segments, $index)]);
             }
 
-            throw ValidationException::withMessages($messages);
+            if (array_key_exists($segment, $state)) {
+                $state = $state[$segment];
+                $mapped[] = $segment;
+
+                continue;
+            }
+
+            if (ctype_digit($segment) && ! array_is_list($state)) {
+                $key = array_keys($state)[(int) $segment] ?? null;
+
+                if ($key !== null) {
+                    $state = $state[$key];
+                    $mapped[] = (string) $key;
+
+                    continue;
+                }
+            }
+
+            $mapped[] = $segment;
+            $state = null;
         }
+
+        return implode('.', $mapped);
     }
 
     private function loadSection(int $sectionId): void
