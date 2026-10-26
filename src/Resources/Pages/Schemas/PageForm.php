@@ -53,8 +53,8 @@ class PageForm
                         CheckboxList::make('page_sections')
                             ->label(__('phi-cms-core::phi-cms-core.sections'))
                             ->relationship('sections', 'title', function ($query) {
-                                return $query->select(['id', 'title'])
-                                    ->where('status', '=', SectionStatus::ACTIVE->value);
+                                return $query->reorder()->select(['sections.id', 'sections.title'])
+                                    ->where('sections.status', '=', SectionStatus::ACTIVE->value);
                             })
                             ->gridDirection('row')
                             ->searchable()

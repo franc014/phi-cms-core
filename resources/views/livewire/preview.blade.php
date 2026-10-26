@@ -1,7 +1,8 @@
 <div class="space-y-6 bg-gray-50 p-4 text-gray-900 dark:bg-gray-950 dark:text-gray-100"
     x-data
     x-on:phi-page-editor-focus="$nextTick(() => { const editor = $refs.pageEditor; const target = editor?.querySelector('[aria-invalid=true]') ?? editor?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled])'); target?.focus(); })"
-    x-on:phi-section-editor-focus="$nextTick(() => $refs.editorForm?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus())">
+    x-on:phi-section-editor-focus="$nextTick(() => { $refs.editorForm?.scrollIntoView({ behavior: 'smooth', block: 'start' }); $refs.editorForm?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true }); })"
+    x-on:phi-section-editor-scroll="$nextTick(() => $refs.editorForm?.scrollIntoView({ behavior: 'smooth', block: 'start' }))">
     <header>
         <h1 class="text-2xl font-semibold">{{ $pageMode ? 'Page draft preview' : __('phi-cms-core::workflow.preview') }}</h1>
         <p>{{ $pageMode ? 'This private canvas uses the saved Page draft. Public output remains unchanged until the Page is published.' : __('phi-cms-core::workflow.preview_help') }}</p>
@@ -23,15 +24,15 @@
                     </div>
                     @error('fields') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <label class="block text-sm font-medium">Title
-                        <input type="text" wire:model="pageData.title" class="mt-1 block w-full rounded border-gray-300" @error('fields.title') aria-invalid="true" @enderror />
+                        <input type="text" wire:model="pageData.title" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.title') aria-invalid="true" @enderror />
                     </label>
                     @error('fields.title') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <label class="block text-sm font-medium">Slug
-                        <input type="text" wire:model="pageData.slug" class="mt-1 block w-full rounded border-gray-300" @error('fields.slug') aria-invalid="true" @enderror />
+                        <input type="text" wire:model="pageData.slug" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.slug') aria-invalid="true" @enderror />
                     </label>
                     @error('fields.slug') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <label class="block text-sm font-medium">Description
-                        <textarea wire:model="pageData.description" class="mt-1 block w-full rounded border-gray-300" @error('fields.description') aria-invalid="true" @enderror></textarea>
+                        <textarea wire:model="pageData.description" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.description') aria-invalid="true" @enderror></textarea>
                     </label>
                     @error('fields.description') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <p class="text-sm text-gray-600 dark:text-gray-300">Template (developer-controlled): <strong>{{ $pageData['template'] ?? 'Unavailable' }}</strong></p>
@@ -42,7 +43,7 @@
                             <div class="mt-3 space-y-3">
                                 @foreach (['title', 'description', 'og_title', 'og_description', 'twitter_title', 'twitter_card', 'twitter_description', 'robots'] as $metaKey)
                                     <label class="block text-sm font-medium">{{ str($metaKey)->replace('_', ' ')->title() }}
-                                        <input type="text" wire:model="pageData.metatags.{{ $metaKey }}" class="mt-1 block w-full rounded border-gray-300" @error('fields.metatags.'.$metaKey) aria-invalid="true" @enderror />
+                                        <input type="text" wire:model="pageData.metatags.{{ $metaKey }}" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.metatags.'.$metaKey) aria-invalid="true" @enderror />
                                     </label>
                                     @error('fields.metatags.'.$metaKey) <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                                 @endforeach
@@ -79,7 +80,7 @@
                     @endforeach
                     @if ($canComposePage && count($selectableSections) > 0)
                         <label class="block text-sm font-medium">Add existing adopted Section
-                            <select wire:change="addPageSection($event.target.value)" class="mt-1 block w-full rounded border-gray-300">
+                            <select wire:change="addPageSection($event.target.value)" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white">
                                 <option value="">Choose a Section</option>
                                 @foreach ($selectableSections as $selectableSection)
                                     <option value="{{ $selectableSection->id }}">{{ $selectableSection->title }} — {{ $selectableSection->type }}</option>
@@ -118,7 +119,7 @@
                                         </li>
                                     @endforeach
                                 </ul>
-                                <iframe title="Prospective public Page — published Section content" sandbox="" width="100%" height="480" srcdoc="{{ $pageReview['prospective_result']['html'] }}"></iframe>
+                                <iframe title="Prospective public Page — published Section content" sandbox="allow-same-origin" class="w-full rounded border border-gray-300" style="min-height: 480px; box-sizing: content-box" x-on:load="$el.style.height = ($el.contentDocument?.documentElement.scrollHeight ?? 480) + 'px'" srcdoc="{{ $pageReview['prospective_result']['html'] }}"></iframe>
                                 <x-filament::button wire:click="publishPage">Publish Page</x-filament::button>
                             </div>
                         @endif

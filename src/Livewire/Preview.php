@@ -166,6 +166,7 @@ class Preview extends FormsComponent
         if ($this->sectionId !== $sectionId) {
             $this->loadSection($sectionId);
         }
+        $this->dispatch('phi-section-editor-scroll');
     }
 
     public function resolveSwitch(string $decision): void
@@ -373,7 +374,13 @@ class Preview extends FormsComponent
         }
 
         try {
-            $this->pagePublicationReview = app(PageContent::class)->review(Page::findOrFail($this->pageId), (int) $this->version);
+            $current = app(PageContent::class)->review(Page::findOrFail($this->pageId), (int) $this->version);
+            if ($current['fingerprint'] !== $this->pagePublicationReview['fingerprint']) {
+                $this->pagePublicationReview = null;
+                $this->addError('workflow', 'The prospective public Page changed. Review Page publication again before publishing.');
+            } else {
+                $this->pagePublicationReview = $current;
+            }
         } catch (PageConflict $exception) {
             $this->pagePublicationReview = null;
             $this->addError('workflow', $exception->getMessage() ?: 'The Page changed after review. Reload the Page draft and review again.');
@@ -524,7 +531,7 @@ class Preview extends FormsComponent
             ]);
         }
         $page = $this->pageId === null ? null : $this->content()->authorizePage(Page::findOrFail($this->pageId));
-        $sections = $page?->sections()->where('status', SectionStatus::ACTIVE)->orderByPivot('order_column')->get() ?? collect();
+        $sections = $page?->sections()->where('sections.status', SectionStatus::ACTIVE)->orderByPivot('order_column')->get() ?? collect();
         $section = $this->sectionId === null ? null : $this->selectedSection();
 
         return view('phi-cms-core::livewire.preview', [
@@ -694,10 +701,10 @@ class Preview extends FormsComponent
         if ($this->pageId !== null) {
             if ($this->pageMode) {
                 $page = app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
-                abort_unless($page->draftSections()->whereKey($sectionId)->where('status', SectionStatus::ACTIVE)->exists(), 403);
+                abort_unless($page->draftSections()->whereKey($sectionId)->where('sections.status', SectionStatus::ACTIVE)->exists(), 403);
             } else {
                 $page = $this->content()->authorizePage(Page::findOrFail($this->pageId));
-                abort_unless($page->sections()->whereKey($sectionId)->where('status', SectionStatus::ACTIVE)->exists(), 403);
+                abort_unless($page->sections()->whereKey($sectionId)->where('sections.status', SectionStatus::ACTIVE)->exists(), 403);
             }
         }
         if ($this->pageMode && $section->content_version === null) {
