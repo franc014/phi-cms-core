@@ -30,12 +30,16 @@ final class SectionImageController extends Controller
     public function preview(Section $section, string $uuid, SectionImages $images, SectionContent $content): BinaryFileResponse
     {
         request()->attributes->set('phi-cms.private', true);
-        $content->draft($section);
         $pageId = request()->query('page');
-        $page = $pageId === null ? null : Page::query()->published()->findOrFail($pageId);
+        $page = $pageId === null ? null : Page::query()->findOrFail($pageId);
         $context = app(SectionImageContext::class);
         $context->set($section, $page, preview: true);
         $context->authorizeRead();
+        if ($context->canReadDraft()) {
+            $content->draft($section);
+        } else {
+            $content->published($section);
+        }
         $mediaClass = config('media-library.media_model');
         $media = $mediaClass::query()->where('uuid', $uuid)->firstOrFail();
         $path = $images->privatePath($section, $media);

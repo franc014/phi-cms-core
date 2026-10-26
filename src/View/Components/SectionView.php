@@ -5,6 +5,7 @@ namespace JFA\PhiCmsCore\View\Components;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Log;
 use Illuminate\View\Component;
+use JFA\PhiCmsCore\Enums\SectionStatus;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\SectionImageResolver;
@@ -18,9 +19,15 @@ final class SectionView extends Component
 
     public string $definitionView;
 
-    public SectionImageResolver $images;
+    public ?SectionImageResolver $images = null;
 
     public string $occurrence;
+
+    public string $source = 'published';
+
+    public bool $unavailable = false;
+
+    public bool $canSelect = false;
 
     public function __construct(
         SectionRenderer $renderer,
@@ -35,7 +42,14 @@ final class SectionView extends Component
             $rendered = $renderer->section($section, $page, $preview);
             $this->content = $rendered['content'];
             $this->definitionView = $rendered['view'];
-            $this->images = new SectionImageResolver($section, $this->content, $preview, $page);
+            $this->source = $rendered['source'] ?? 'published';
+            $this->unavailable = $rendered['unavailable'] ?? false;
+            if (! $this->unavailable) {
+                $this->images = new SectionImageResolver($section, $this->content, $preview, $page);
+            }
+            $this->canSelect = $preview
+                && $section->status === SectionStatus::ACTIVE
+                && auth()->user()?->fresh()?->can('viewDraft', $section) === true;
         } catch (Throwable $exception) {
             if ($preview) {
                 throw $exception;

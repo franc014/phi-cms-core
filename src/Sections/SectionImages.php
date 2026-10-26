@@ -433,12 +433,14 @@ final class SectionImages
             if ($media === null || $media->getCustomProperty('phi_tombstoned_at')) {
                 return false;
             }
-            if ($this->referenceInSnapshot($section, $reference)) {
+            $context = app(SectionImageContext::class);
+            $publishedOnly = $context->hasAuthorizedRead() && ! $context->canReadDraft();
+            if ($this->referenceInSnapshot($section, $reference, $publishedOnly ? 'published' : null)) {
                 return true;
             }
             $candidate = $media->getCustomProperty('phi_candidate');
 
-            return is_array($candidate)
+            return ! $publishedOnly && is_array($candidate)
                 && ($candidate['actor'] ?? null) === (string) auth()->id()
                 && ($candidate['session'] ?? null) === hash('sha256', session()->getId())
                 && ($candidate['page'] ?? null) === app(SectionImageContext::class)->page()?->getKey()
@@ -467,9 +469,14 @@ final class SectionImages
             && in_array(parse_url($reference, PHP_URL_SCHEME), ['http', 'https'], true);
     }
 
-    private function referenceInSnapshot(Section $section, string $reference): bool
+    private function referenceInSnapshot(Section $section, string $reference, ?string $source = null): bool
     {
-        foreach ([$section->draft_content, $section->published_content] as $snapshot) {
+        $snapshots = match ($source) {
+            'published' => [$section->published_content],
+            'draft' => [$section->draft_content],
+            default => [$section->draft_content, $section->published_content],
+        };
+        foreach ($snapshots as $snapshot) {
             foreach ($this->references($section, is_array($snapshot) ? $snapshot : []) as $item) {
                 if ($item['reference'] === $reference) {
                     return true;

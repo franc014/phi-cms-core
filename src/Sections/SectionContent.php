@@ -12,6 +12,7 @@ use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\SectionStatus;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
+use JFA\PhiCmsCore\Pages\PageContent;
 use Throwable;
 
 final class SectionContent
@@ -34,17 +35,22 @@ final class SectionContent
         }
     }
 
-    /** @return array<int, array{view: string, content: array<string, mixed>}> */
+    /** @return array<int, array{view: string, content: array<string, mixed>, source: string, unavailable: bool}> */
     public function renderPage(Page $page, bool $preview): array
     {
-        $freshPage = $preview ? $this->authorizePage($page) : Page::query()->published()->findOrFail((int) $page->getKey());
-        $columns = ['sections.id', 'sections.type', 'content_version', 'published_content', 'legacy_image_sources'];
+        $freshPage = $preview
+            ? app(PageContent::class)->authorizePreview($page)
+            : Page::query()->published()->findOrFail((int) $page->getKey());
+        $columns = ['sections.id', 'sections.type', 'sections.status', 'content_version', 'published_content', 'legacy_image_sources'];
         if ($preview) {
             request()->attributes->set('phi-cms.private', true);
             $columns[] = 'draft_content';
         }
         $relationship = $preview && $freshPage->page_version !== null ? $freshPage->draftSections() : $freshPage->sections();
-        $sections = $relationship->where('sections.status', SectionStatus::ACTIVE)
+        if (! $preview) {
+            $relationship->where('sections.status', SectionStatus::ACTIVE);
+        }
+        $sections = $relationship
             ->where(function (Builder $query) use ($preview): void {
                 $query->whereNotNull('content_version');
                 if (! $preview) {
@@ -57,20 +63,33 @@ final class SectionContent
             if (isset($rendered[$section->id])) {
                 continue;
             }
+
+            $view = $this->registry->get($section->type)::view();
+            if ($preview && $section->status !== SectionStatus::ACTIVE) {
+                $rendered[$section->id] = ['view' => $view, 'content' => [], 'source' => 'unavailable', 'unavailable' => true];
+
+                continue;
+            }
+
+            $source = 'published';
             if ($preview && $section->content_version !== null) {
                 abort_if($actor === null, 403);
-                if (! Gate::forUser($actor)->allows('viewDraft', $section)) {
-                    if (! is_array($section->published_content)) {
-                        continue;
-                    }
-                    $snapshot = $section->published_content;
-                } else {
-                    $snapshot = $section->draft_content;
-                }
-            } else {
-                $snapshot = $preview ? $section->draft_content : $section->published_content;
+                $source = Gate::forUser($actor)->allows('viewDraft', $section) ? 'draft' : 'published';
             }
-            $rendered[$section->id] = ['view' => $this->registry->get($section->type)::view(), 'content' => $this->normalizeSnapshot($section, $snapshot, allowRecovery: ! $preview)];
+
+            $snapshot = $source === 'draft' ? $section->draft_content : $section->published_content;
+            if ($preview && ! is_array($snapshot)) {
+                $rendered[$section->id] = ['view' => $view, 'content' => [], 'source' => 'unavailable', 'unavailable' => true];
+
+                continue;
+            }
+
+            $rendered[$section->id] = [
+                'view' => $view,
+                'content' => $this->normalizeSnapshot($section, $snapshot, allowRecovery: ! $preview),
+                'source' => $source,
+                'unavailable' => false,
+            ];
         }
 
         return $rendered;

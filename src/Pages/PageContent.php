@@ -145,10 +145,31 @@ final class PageContent
         $fresh = $this->authorizePreview($page);
 
         return $fresh->draftSections()
-            ->where('sections.status', SectionStatus::ACTIVE)
             ->with(['pages'])
             ->get()
             ->all();
+    }
+
+    /** @return array<int, Section> */
+    public function restorableLegacySections(Page $page): array
+    {
+        $fresh = $this->authorizePreview($page);
+        $draftOccurrences = DB::table('page_section')
+            ->where('page_id', $fresh->getKey())
+            ->where('stage', 'draft')
+            ->whereNotNull('occurrence_id')
+            ->pluck('occurrence_id')
+            ->all();
+
+        $query = $fresh->sections()
+            ->where('sections.type', 'about-banner')
+            ->whereNotNull('page_section.occurrence_id')
+            ->with(['pages']);
+        if ($draftOccurrences !== []) {
+            $query->whereNotIn('page_section.occurrence_id', $draftOccurrences);
+        }
+
+        return $query->get()->all();
     }
 
     /** @return array<int, Section> */
@@ -159,7 +180,8 @@ final class PageContent
         $composition = $this->pages->composition($metadata['template']);
         $allowed = $composition['allowed'];
 
-        if (! auth()->user()?->can('viewAny', new Section)) {
+        $actor = auth()->user()?->fresh();
+        if ($actor === null || ! Gate::forUser($actor)->allows('viewAny', new Section)) {
             return [];
         }
 
@@ -170,6 +192,8 @@ final class PageContent
             ->orderBy('title')
             ->orderBy('id')
             ->get()
+            ->filter(fn (Section $section): bool => Gate::forUser($actor)->allows('view', $section))
+            ->values()
             ->all();
     }
 
@@ -202,7 +226,7 @@ final class PageContent
             $this->forgetReview($page);
 
             return $version;
-        } catch (ValidationException|PageConflict $exception) {
+        } catch (ValidationException | PageConflict $exception) {
             throw $exception;
         }
     }
@@ -261,6 +285,18 @@ final class PageContent
                 ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
+            $publishedProvenance = PageSection::query()
+                ->where('page_id', $fresh->getKey())
+                ->where('stage', 'published')
+                ->whereIn('section_id', $sectionIds)
+                ->with('section')
+                ->orderBy('order_column')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->filter(fn (PageSection $assignment): bool => $assignment->section?->type === 'about-banner')
+                ->keyBy('section_id');
+            $restoredLegacySectionIds = [];
 
             foreach ($pivotIds as $pivotId) {
                 if (! $existing->has($pivotId)) {
@@ -280,12 +316,24 @@ final class PageContent
                 if ($pivot !== null && (int) $pivot->section_id !== $section->getKey()) {
                     throw ValidationException::withMessages(["sections.{$index}.section_id" => 'An existing occurrence cannot be repointed. Remove it and add a new occurrence.']);
                 }
-                $this->assertSelectableSection($section, $pivot);
+                $provenance = null;
+                if ($pivot === null && $section->type === 'about-banner') {
+                    if ($existing->contains(fn (PageSection $assignment): bool => (int) $assignment->section_id === $section->getKey())
+                        || in_array($section->getKey(), $restoredLegacySectionIds, true)) {
+                        throw ValidationException::withMessages(["sections.{$index}.section_id" => 'The retained legacy About occurrence may only be restored once.']);
+                    }
+                    $provenance = $publishedProvenance->get($section->getKey());
+                    if ($provenance !== null) {
+                        $restoredLegacySectionIds[] = $section->getKey();
+                    }
+                }
+                $this->assertSelectableSection($section, $pivot, $provenance);
                 $normalizedRows[] = [
                     'pivot' => $pivot,
                     'section' => $section,
                     'slot' => $row['slot'] ?? null,
                     'order_column' => $index + 1,
+                    'occurrence_id' => $provenance?->occurrence_id,
                 ];
             }
 
@@ -311,7 +359,7 @@ final class PageContent
                         'section_id' => $row['section']->getKey(),
                         'order_column' => $row['order_column'],
                         'stage' => 'draft',
-                        'occurrence_id' => (string) Str::uuid(),
+                        'occurrence_id' => $row['occurrence_id'] ?? (string) Str::uuid(),
                         'slot' => $row['slot'],
                         'created_at' => now(),
                         'updated_at' => now(),
@@ -438,7 +486,7 @@ final class PageContent
                 'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
                 'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
             ];
-            $path = 'phi-cms/pages/'.$fresh->getKey().'/delete-'.now()->format('YmdHis').'-'.Str::random(8).'.json';
+            $path = 'phi-cms/pages/' . $fresh->getKey() . '/delete-' . now()->format('YmdHis') . '-' . Str::random(8) . '.json';
             if (! Storage::disk('local')->put($path, json_encode($export, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 'private')) {
                 throw new PageConflict('The recovery export could not be written; the Page was not deleted.');
             }
@@ -466,7 +514,7 @@ final class PageContent
         if ($fresh->page_version === null) {
             $unknownPageFields = array_diff(array_keys($fresh->getRawOriginal()), ['id', 'title', 'slug', 'description', 'route', 'status', 'published_at', 'created_at', 'updated_at', 'template', 'draft_fields', 'page_version']);
             if ($unknownPageFields !== []) {
-                throw new PageConflict('Unknown Page fields require a preservation contract: '.implode(', ', $unknownPageFields));
+                throw new PageConflict('Unknown Page fields require a preservation contract: ' . implode(', ', $unknownPageFields));
             }
             $orders = array_column($assignments, 'order_column');
             if (count($orders) !== count(array_unique($orders)) || in_array(null, $orders, true)) {
@@ -474,7 +522,7 @@ final class PageContent
             }
             $unknownColumns = array_diff(array_keys($assignments[0] ?? []), ['id', 'page_id', 'section_id', 'order_column', 'stage', 'occurrence_id', 'slot', 'created_at', 'updated_at']);
             if ($unknownColumns !== []) {
-                throw new PageConflict('Unknown assignment fields require a preservation contract: '.implode(', ', $unknownColumns));
+                throw new PageConflict('Unknown assignment fields require a preservation contract: ' . implode(', ', $unknownColumns));
             }
             if (DB::table('metatags')->where('metatable_type', $fresh->getMorphClass())->where('metatable_id', $fresh->getKey())->count() > 1) {
                 throw new PageConflict('Multiple Page metatag rows require explicit reconciliation before adoption.');
@@ -662,7 +710,7 @@ final class PageContent
         }
         if ($requireRequired) {
             foreach ($composition['required'] as $required) {
-                $matching = array_filter($rows, function (array|Section $row) use ($required): bool {
+                $matching = array_filter($rows, function (array | Section $row) use ($required): bool {
                     $section = $row instanceof Section ? $row : ($row['section'] ?? $row);
 
                     return $section instanceof Section
@@ -678,13 +726,21 @@ final class PageContent
         }
     }
 
-    private function assertSelectableSection(Section $section, ?PageSection $existing): void
+    private function assertSelectableSection(Section $section, ?PageSection $existing, ?PageSection $provenance = null): void
     {
-        if ($existing !== null && $section->type === 'about-banner') {
+        if ($section->type === 'about-banner' && ($existing !== null || $provenance !== null)) {
             return;
         }
         if ($section->type === 'about-banner') {
             throw ValidationException::withMessages(['sections' => 'The legacy About occurrence can be restored only from its retained Page assignment.']);
+        }
+        if ($existing === null) {
+            $actor = auth()->user()?->fresh();
+            abort_if($actor === null, 403);
+            Gate::forUser($actor)->authorize('viewAny', new Section);
+        }
+        if ($existing === null && $section->status !== SectionStatus::ACTIVE) {
+            throw ValidationException::withMessages(['sections' => "Section {$section->id} is inactive and cannot be added to a Page draft."]);
         }
         if (! $this->sections->has((string) $section->type) || $section->content_version === null) {
             throw ValidationException::withMessages(['sections' => "Section {$section->id} is not available through the adopted Section workflow."]);
@@ -708,7 +764,7 @@ final class PageContent
         $allowed = ['title', 'slug', 'description', 'template', 'metatags'];
         $unknown = array_diff(array_keys($fields), $allowed);
         if ($unknown !== []) {
-            throw ValidationException::withMessages(['fields' => 'Unknown Page fields: '.implode(', ', $unknown).'.']);
+            throw ValidationException::withMessages(['fields' => 'Unknown Page fields: ' . implode(', ', $unknown) . '.']);
         }
         foreach ($allowed as $key) {
             if (! array_key_exists($key, $fields)) {
@@ -727,6 +783,9 @@ final class PageContent
         if (! is_string($fields['template']) || ! $this->pages->has($fields['template'])) {
             throw ValidationException::withMessages(['fields.template' => 'Choose a registered compatible Page template.']);
         }
+        if ($page->page_version !== null && $fields['template'] !== $page->template) {
+            throw ValidationException::withMessages(['fields.template' => 'The Page template is developer-controlled after adoption.']);
+        }
         if ($fields['metatags'] !== null && ! is_array($fields['metatags'])) {
             throw ValidationException::withMessages(['fields.metatags' => 'SEO metadata must be an object or null.']);
         }
@@ -734,7 +793,7 @@ final class PageContent
         if (is_array($fields['metatags'])) {
             $unknownMeta = array_diff(array_keys($fields['metatags']), self::METATAG_KEYS);
             if ($unknownMeta !== []) {
-                throw ValidationException::withMessages(['fields.metatags' => 'Unknown SEO fields: '.implode(', ', $unknownMeta).'.']);
+                throw ValidationException::withMessages(['fields.metatags' => 'Unknown SEO fields: ' . implode(', ', $unknownMeta) . '.']);
             }
             foreach (self::METATAG_KEYS as $key) {
                 if (! array_key_exists($key, $fields['metatags'])) {
@@ -999,6 +1058,15 @@ final class PageContent
 
     private function syncUrls(Page $page, string $newSlug): void
     {
+        $pageClaim = Page::query()
+            ->whereKeyNot($page->getKey())
+            ->where('slug', $newSlug)
+            ->where('status', PageStatus::PUBLISHED->value)
+            ->first(['id', 'slug']);
+        if ($pageClaim !== null) {
+            throw ValidationException::withMessages(['fields.slug' => "The slug [{$newSlug}] is already the current public slug of another Page."]);
+        }
+
         $current = PageUrl::query()->where('slug', $newSlug)->lockForUpdate()->first();
         if ($current !== null && ((int) $current->page_id !== (int) $page->getKey() && $current->kind === 'current')) {
             throw ValidationException::withMessages(['fields.slug' => "The slug [{$newSlug}] is already the current URL of another Page."]);
@@ -1026,7 +1094,7 @@ final class PageContent
         }
     }
 
-    private function authorize(string $ability, Page|Section $record): void
+    private function authorize(string $ability, Page | Section $record): void
     {
         $actor = auth()->user()?->fresh();
         abort_if($actor === null, 403);
@@ -1064,7 +1132,7 @@ final class PageContent
 
     private function reviewKey(Page $page): string
     {
-        return 'phi-cms.reviews.pages.'.$page->getKey();
+        return 'phi-cms.reviews.pages.' . $page->getKey();
     }
 
     private function transaction(Closure $operation): mixed

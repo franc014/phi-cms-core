@@ -10,10 +10,10 @@ final class SectionRenderer
 {
     private ?Request $request = null;
 
-    /** @var array<string, array<int, array{view: string, content: array<string, mixed>}>> */
+    /** @var array<string, array<int, array{view: string, content: array<string, mixed>, source: string, unavailable: bool}>> */
     private array $pages = [];
 
-    /** @return array{view: string, content: array<string, mixed>} */
+    /** @return array{view: string, content: array<string, mixed>, source?: string, unavailable?: bool} */
     public function section(Section $section, ?Page $page, bool $preview): array
     {
         if ($this->request !== request()) {

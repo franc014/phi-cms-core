@@ -83,7 +83,7 @@ final class SectionTemporaryUploads
             && hash_equals($binding['session'], hash('sha256', session()->getId()))
             && session('phi-cms.upload-editors.' . $binding['editor']) === $binding['token'], 403);
         $section = Section::query()->findOrFail($binding['section']);
-        $page = $binding['page'] === null ? null : Page::query()->published()->findOrFail($binding['page']);
+        $page = $binding['page'] === null ? null : Page::query()->findOrFail($binding['page']);
         $context = app(SectionImageContext::class);
         $context->set($section, $page, preview: true);
         if ($write) {

@@ -1,5 +1,6 @@
 <div class="space-y-6 bg-gray-50 p-4 text-gray-900 dark:bg-gray-950 dark:text-gray-100"
     x-data
+    x-on:phi-page-editor-focus="$nextTick(() => { const editor = $refs.pageEditor; const target = editor?.querySelector('[aria-invalid=true]') ?? editor?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled])'); target?.focus(); })"
     x-on:phi-section-editor-focus="$nextTick(() => $refs.editorForm?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus())">
     <header>
         <h1 class="text-2xl font-semibold">{{ $pageMode ? 'Page draft preview' : __('phi-cms-core::workflow.preview') }}</h1>
@@ -15,30 +16,35 @@
             @error('workflow') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
             @error('data') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
             @if ($pageMode)
-                <section class="space-y-4 rounded border border-gray-300 p-4" aria-label="Page draft editor">
+                <section class="space-y-4 rounded border border-gray-300 p-4" aria-label="Page draft editor" x-ref="pageEditor">
                     <div>
                         <h2 class="text-xl font-semibold">Page fields</h2>
                         <p class="text-sm text-gray-600 dark:text-gray-300">Save Page draft and Publish Page are independent from Section publication.</p>
                     </div>
                     @error('fields') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <label class="block text-sm font-medium">Title
-                        <input type="text" wire:model="pageData.title" class="mt-1 block w-full rounded border-gray-300" />
+                        <input type="text" wire:model="pageData.title" class="mt-1 block w-full rounded border-gray-300" @error('fields.title') aria-invalid="true" @enderror />
                     </label>
+                    @error('fields.title') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <label class="block text-sm font-medium">Slug
-                        <input type="text" wire:model="pageData.slug" class="mt-1 block w-full rounded border-gray-300" />
+                        <input type="text" wire:model="pageData.slug" class="mt-1 block w-full rounded border-gray-300" @error('fields.slug') aria-invalid="true" @enderror />
                     </label>
+                    @error('fields.slug') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     <label class="block text-sm font-medium">Description
-                        <textarea wire:model="pageData.description" class="mt-1 block w-full rounded border-gray-300"></textarea>
+                        <textarea wire:model="pageData.description" class="mt-1 block w-full rounded border-gray-300" @error('fields.description') aria-invalid="true" @enderror></textarea>
                     </label>
-                    <p class="text-sm text-gray-600 dark:text-gray-300">Template: <strong>{{ $pageData['template'] ?? 'Unavailable' }}</strong></p>
+                    @error('fields.description') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
+                    <p class="text-sm text-gray-600 dark:text-gray-300">Template (developer-controlled): <strong>{{ $pageData['template'] ?? 'Unavailable' }}</strong></p>
+                    @error('fields.template') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     @if (is_array($pageData['metatags'] ?? null))
                         <details>
                             <summary class="cursor-pointer text-sm font-medium">Text SEO</summary>
                             <div class="mt-3 space-y-3">
                                 @foreach (['title', 'description', 'og_title', 'og_description', 'twitter_title', 'twitter_card', 'twitter_description', 'robots'] as $metaKey)
                                     <label class="block text-sm font-medium">{{ str($metaKey)->replace('_', ' ')->title() }}
-                                        <input type="text" wire:model="pageData.metatags.{{ $metaKey }}" class="mt-1 block w-full rounded border-gray-300" />
+                                        <input type="text" wire:model="pageData.metatags.{{ $metaKey }}" class="mt-1 block w-full rounded border-gray-300" @error('fields.metatags.'.$metaKey) aria-invalid="true" @enderror />
                                     </label>
+                                    @error('fields.metatags.'.$metaKey) <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                                 @endforeach
                                 <p class="text-xs text-gray-500">SEO image references are preserved and read-only in this workflow.</p>
                             </div>
@@ -46,10 +52,11 @@
                     @else
                         <p class="text-xs text-gray-500">No SEO relationship is currently present; this workflow does not invent one.</p>
                     @endif
+                    @error('fields.metatags') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                     @if ($canUpdatePage)
                         <x-filament::button wire:click="savePageDraft" wire:loading.attr="disabled">Save Page draft</x-filament::button>
                     @endif
-                    <x-filament::button color="gray" wire:click="reloadLatest" wire:confirm="Reload the latest saved Page draft?">Reload latest</x-filament::button>
+                    <x-filament::button color="gray" wire:click="reloadPageDraft" wire:confirm="Reload the latest saved Page draft? Unsaved Page fields and the selected Section editor will be reset.">Reload Page draft</x-filament::button>
                 </section>
 
                 <section class="space-y-4 rounded border border-gray-300 p-4" aria-label="Draft sections">
@@ -80,6 +87,16 @@
                             </select>
                         </label>
                     @endif
+                    @if ($canComposePage && count($restorableLegacySections) > 0)
+                        <div class="space-y-2">
+                            <p class="text-sm font-medium">Restore retained legacy occurrence</p>
+                            @foreach ($restorableLegacySections as $legacySection)
+                                <x-filament::button size="sm" color="gray" wire:click="restoreLegacyPageSection({{ $legacySection->id }})">
+                                    Restore {{ $legacySection->title }} (current/live legacy)
+                                </x-filament::button>
+                            @endforeach
+                        </div>
+                    @endif
                     @if ($canComposePage)
                         <x-filament::button wire:click="savePageComposition">Save composition</x-filament::button>
                     @endif
@@ -105,6 +122,16 @@
                                 <x-filament::button wire:click="publishPage">Publish Page</x-filament::button>
                             </div>
                         @endif
+                        @if ($canPublishPage && $page->status === \JFA\PhiCmsCore\Enums\PageStatus::PUBLISHED)
+                            <x-filament::button color="warning" wire:click="unpublishPage" wire:confirm="Unpublish this Page? Its public URLs will stop resolving. Drafts and Section content are retained.">Unpublish Page</x-filament::button>
+                        @endif
+                    </section>
+                @endif
+                @if ($canDeletePage)
+                    <section class="space-y-3 rounded border border-red-300 p-4" aria-label="Page maintenance">
+                        <h2 class="text-xl font-semibold">Page maintenance</h2>
+                        <p class="text-sm">Deletion writes a private recovery export first. Shared Sections and their files are retained.</p>
+                        <x-filament::button color="danger" wire:click="deletePage" wire:confirm="Delete this Page? A private recovery export will be written first. Shared Sections and files are retained.">Delete Page</x-filament::button>
                     </section>
                 @endif
             @endif

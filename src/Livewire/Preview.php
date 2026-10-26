@@ -3,7 +3,9 @@
 namespace JFA\PhiCmsCore\Livewire;
 
 use Filament\Forms\FormsComponent;
+use Filament\Notifications\Notification;
 use Filament\Schemas\Schema;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
@@ -14,6 +16,7 @@ use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Pages\PageConflict;
 use JFA\PhiCmsCore\Pages\PageContent;
+use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Sections\SectionConflict;
 use JFA\PhiCmsCore\Sections\SectionContent;
 use JFA\PhiCmsCore\Sections\SectionImageContext;
@@ -90,6 +93,9 @@ class Preview extends FormsComponent
 
     #[Locked]
     public ?int $version = null;
+
+    #[Locked]
+    public ?int $sectionVersion = null;
 
     #[Locked]
     public bool $pageMode = false;
@@ -169,7 +175,7 @@ class Preview extends FormsComponent
 
         if ($decision === 'cancel') {
             $this->pendingSectionId = null;
-            $this->dispatch('phi-section-editor-focus');
+            $this->focusActiveEditor();
 
             return;
         }
@@ -178,17 +184,36 @@ class Preview extends FormsComponent
             return;
         }
 
-        if ($decision === 'save' && ! $this->persistDraft()) {
-            return;
+        $pendingSectionId = $this->pendingSectionId;
+
+        if ($decision === 'discard' && $this->pageIsDirty()) {
+            $this->pageData = $this->pageBaseline;
+            $this->resetErrorBag();
         }
 
-        $this->loadSection($this->pendingSectionId);
-        $this->dispatch('phi-section-editor-focus');
+        if ($decision === 'save') {
+            try {
+                $saved = $this->savePendingDraft();
+            } catch (ValidationException $exception) {
+                $this->focusActiveEditor();
+
+                throw $exception;
+            }
+
+            if (! $saved) {
+                $this->focusActiveEditor();
+
+                return;
+            }
+        }
+
+        $this->loadSection($pendingSectionId);
+        $this->focusSectionEditor();
     }
 
     public function saveDraft(): void
     {
-        if ($this->pageMode) {
+        if ($this->pageMode && $this->sectionId === null) {
             $this->savePageDraft();
 
             return;
@@ -197,21 +222,44 @@ class Preview extends FormsComponent
         try {
             $this->persistDraft();
         } finally {
-            $this->dispatch('phi-section-editor-focus');
+            $this->focusSectionEditor();
         }
     }
 
     public function reloadLatest(): void
     {
         if ($this->pageMode) {
-            $this->loadPage();
+            if ($this->sectionId !== null) {
+                $this->loadSection($this->sectionId);
+
+                return;
+            }
+
+            $this->reloadPageDraft();
 
             return;
         }
+
         $this->loadSection($this->selectedSection()->id);
     }
 
+    public function reloadPageDraft(): void
+    {
+        abort_unless($this->pageMode, 403);
+        $this->loadPage();
+        $this->resetErrorBag();
+    }
+
     public function savePageDraft(): void
+    {
+        try {
+            $this->persistPageDraft();
+        } finally {
+            $this->focusPageEditor();
+        }
+    }
+
+    private function persistPageDraft(): bool
     {
         abort_unless($this->pageMode && $this->pageId !== null, 403);
 
@@ -220,11 +268,27 @@ class Preview extends FormsComponent
             $this->pageBaseline = $this->pageData;
             $this->pagePublicationReview = null;
             $this->resetErrorBag();
-            $this->dispatch('phi-page-editor-focus');
+
+            return true;
         } catch (PageConflict $exception) {
             $this->pagePublicationReview = null;
             $this->addError('workflow', $exception->getMessage());
+
+            return false;
         }
+    }
+
+    private function savePendingDraft(): bool
+    {
+        if (! $this->pageMode) {
+            return $this->persistDraft();
+        }
+
+        if ($this->pageIsDirty() && ! $this->persistPageDraft()) {
+            return false;
+        }
+
+        return ! $this->sectionIsDirty() || $this->persistDraft();
     }
 
     public function savePageComposition(): void
@@ -234,15 +298,28 @@ class Preview extends FormsComponent
         try {
             $this->version = app(PageContent::class)->saveDraftSections(Page::findOrFail($this->pageId), $this->pageRows, (int) $this->version);
             $this->pagePublicationReview = null;
-            $this->loadPage();
+            $this->refreshPageRows();
+            if ($this->sectionId !== null && ! collect($this->pageRows)->contains(fn (array $row): bool => (int) $row['section_id'] === $this->sectionId)) {
+                $this->deselectSection();
+            }
             $this->resetErrorBag();
         } catch (PageConflict $exception) {
             $this->pagePublicationReview = null;
             $this->addError('workflow', $exception->getMessage());
+        } catch (ValidationException $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', collect($exception->errors())->flatten()->first() ?? $exception->getMessage());
         }
     }
 
     public function addPageSection(int $sectionId): void
+    {
+        abort_unless($this->pageMode, 403);
+        $this->pageRows[] = ['pivot_id' => null, 'section_id' => $sectionId, 'slot' => null];
+        $this->savePageComposition();
+    }
+
+    public function restoreLegacyPageSection(int $sectionId): void
     {
         abort_unless($this->pageMode, 403);
         $this->pageRows[] = ['pivot_id' => null, 'section_id' => $sectionId, 'slot' => null];
@@ -289,6 +366,26 @@ class Preview extends FormsComponent
         }
     }
 
+    private function refreshPagePublicationReview(): void
+    {
+        if ($this->pagePublicationReview === null || $this->pageId === null) {
+            return;
+        }
+
+        try {
+            $this->pagePublicationReview = app(PageContent::class)->review(Page::findOrFail($this->pageId), (int) $this->version);
+        } catch (PageConflict $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', $exception->getMessage() ?: 'The Page changed after review. Reload the Page draft and review again.');
+        } catch (ValidationException $exception) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', collect($exception->errors())->flatten()->first() ?? $exception->getMessage());
+        } catch (AuthorizationException) {
+            $this->pagePublicationReview = null;
+            $this->addError('workflow', 'Your Page publication permission changed. Review the Page again if access is restored.');
+        }
+    }
+
     public function publishPage(): void
     {
         abort_unless($this->pageMode && $this->pageId !== null, 403);
@@ -322,6 +419,26 @@ class Preview extends FormsComponent
         }
     }
 
+    public function deletePage(): void
+    {
+        abort_unless($this->pageMode && $this->pageId !== null, 403);
+
+        try {
+            $path = app(PageContent::class)->delete(Page::findOrFail($this->pageId), (int) $this->version);
+        } catch (PageConflict $exception) {
+            $this->addError('workflow', $exception->getMessage());
+
+            return;
+        }
+
+        Notification::make()
+            ->title('Page deleted')
+            ->body("A private recovery export was written to [{$path}].")
+            ->success()
+            ->send();
+        $this->redirect(PageResource::getUrl('index'));
+    }
+
     public function reviewPublication(): void
     {
         $section = $this->selectedSection();
@@ -334,7 +451,7 @@ class Preview extends FormsComponent
         }
 
         try {
-            $this->publicationReview = $this->content()->review($section, $this->version);
+            $this->publicationReview = $this->content()->review($section, (int) $this->sectionVersion);
             $this->resetErrorBag('workflow');
         } catch (SectionConflict $exception) {
             $this->publicationReview = null;
@@ -358,7 +475,7 @@ class Preview extends FormsComponent
         }
 
         try {
-            $this->version = $this->content()->publish($section, $this->version);
+            $this->sectionVersion = $this->content()->publish($section, (int) $this->sectionVersion);
             $this->publicationReview = null;
             $this->resetErrorBag();
         } catch (SectionConflict $exception) {
@@ -382,6 +499,7 @@ class Preview extends FormsComponent
     {
         $this->ensureContext();
         if ($this->pageMode) {
+            $this->refreshPagePublicationReview();
             $page = app(PageContent::class)->previewPage(Page::findOrFail($this->pageId));
             $sections = collect(app(PageContent::class)->previewSections($page));
             $selectedSection = $this->sectionId === null ? null : $this->selectedSection();
@@ -400,7 +518,9 @@ class Preview extends FormsComponent
                 'canUpdatePage' => auth()->user()?->fresh()?->can('update', $page) ?? false,
                 'canComposePage' => auth()->user()?->fresh()?->can('compose', $page) ?? false,
                 'canPublishPage' => auth()->user()?->fresh()?->can('publish', $page) ?? false,
+                'canDeletePage' => auth()->user()?->fresh()?->can('delete', $page) ?? false,
                 'selectableSections' => app(PageContent::class)->selectableSections($page),
+                'restorableLegacySections' => app(PageContent::class)->restorableLegacySections($page),
             ]);
         }
         $page = $this->pageId === null ? null : $this->content()->authorizePage(Page::findOrFail($this->pageId));
@@ -424,7 +544,7 @@ class Preview extends FormsComponent
         try {
             app(SectionRegistry::class)->get($section->type)::normalize($this->canonicalInput());
             $state = $this->form->getState();
-            $this->version = $this->content()->saveDraft($section, $state, $this->version);
+            $this->sectionVersion = $this->content()->saveDraft($section, $state, (int) $this->sectionVersion);
             $this->baseline = app(SectionRegistry::class)->get($section->type)::normalize($state);
             $this->publicationReview = null;
             $this->resetErrorBag();
@@ -503,7 +623,10 @@ class Preview extends FormsComponent
             preview: true,
         );
         $this->sectionId = $sectionId;
-        $this->version = $section->content_version;
+        $this->sectionVersion = $section->content_version;
+        if (! $this->pageMode) {
+            $this->version = $section->content_version;
+        }
         $this->uploadContext = app(SectionTemporaryUploads::class)->activate($this->getId());
         $this->baseline = $this->content()->draft($section);
         $this->cacheSchema('form', null);
@@ -515,9 +638,16 @@ class Preview extends FormsComponent
 
     private function isDirty(): bool
     {
-        if ($this->pageMode) {
-            return $this->pageData !== $this->pageBaseline;
-        }
+        return $this->pageIsDirty() || $this->sectionIsDirty();
+    }
+
+    private function pageIsDirty(): bool
+    {
+        return $this->pageMode && $this->pageData !== $this->pageBaseline;
+    }
+
+    private function sectionIsDirty(): bool
+    {
         if ($this->sectionId === null) {
             return false;
         }
@@ -617,23 +747,59 @@ class Preview extends FormsComponent
             'metatags' => $metadata['metatags'],
         ];
         $this->pageBaseline = $this->pageData;
-        $this->pageRows = collect(app(PageContent::class)->previewSections($page))
+        $this->refreshPageRows();
+        $this->pagePublicationReview = null;
+        $this->pendingSectionId = null;
+        if ($this->sectionId !== null) {
+            $this->deselectSection();
+        }
+    }
+
+    private function refreshPageRows(): void
+    {
+        abort_unless($this->pageId !== null, 403);
+        $this->pageRows = collect(app(PageContent::class)->previewSections(Page::findOrFail($this->pageId)))
             ->map(fn (Section $section): array => [
                 'pivot_id' => (int) $section->pivot->id,
                 'section_id' => (int) $section->getKey(),
                 'slot' => $section->pivot->slot === null ? null : (int) $section->pivot->slot,
             ])->values()->all();
-        $this->pagePublicationReview = null;
-        if ($this->sectionId !== null) {
-            $this->sectionId = null;
-            $this->data = [];
-            $this->baseline = [];
-        }
+    }
+
+    private function deselectSection(): void
+    {
+        $this->sectionId = null;
+        $this->sectionVersion = null;
+        $this->data = [];
+        $this->baseline = [];
+        $this->publicationReview = null;
+        $this->cacheSchema('form', null);
     }
 
     private function allows(string $ability, Section $section): bool
     {
         return auth()->user()?->fresh()?->can($ability, $section) ?? false;
+    }
+
+    private function focusActiveEditor(): void
+    {
+        if ($this->sectionId === null) {
+            $this->focusPageEditor();
+
+            return;
+        }
+
+        $this->focusSectionEditor();
+    }
+
+    private function focusPageEditor(): void
+    {
+        $this->dispatch('phi-page-editor-focus');
+    }
+
+    private function focusSectionEditor(): void
+    {
+        $this->dispatch('phi-section-editor-focus');
     }
 
     private function content(): SectionContent

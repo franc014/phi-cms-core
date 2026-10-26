@@ -84,17 +84,16 @@ class Section extends ContentModel
             if ($current === null) {
                 return null;
             }
-            if ($current->content_version !== null || $current->draft_content !== null || $current->published_content !== null) {
-                $usages = DB::table('page_section')
-                    ->join('pages', 'pages.id', '=', 'page_section.page_id')
-                    ->where('page_section.section_id', $current->id)
-                    ->orderBy('pages.id')
-                    ->orderBy('page_section.stage')
-                    ->orderBy('page_section.order_column')
-                    ->pluck('pages.title')
-                    ->unique()
-                    ->implode(', ');
-
+            $usages = DB::table('page_section')
+                ->join('pages', 'pages.id', '=', 'page_section.page_id')
+                ->where('page_section.section_id', $current->id)
+                ->orderBy('pages.id')
+                ->orderBy('page_section.stage')
+                ->orderBy('page_section.order_column')
+                ->pluck('pages.title')
+                ->unique()
+                ->implode(', ');
+            if ($current->content_version !== null || $current->draft_content !== null || $current->published_content !== null || $usages !== '') {
                 throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.recovery_protected_section_delete', [
                     'usages' => $usages ?: __('phi-cms-core::phi-cms-core.none'),
                 ])]);

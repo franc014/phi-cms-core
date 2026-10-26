@@ -14,11 +14,17 @@ final class SectionImageContext
 
     private bool $preview = false;
 
+    private bool $draftAuthorized = false;
+
+    private bool $readAuthorized = false;
+
     public function set(Section $section, ?Page $page = null, bool $preview = true): void
     {
         $this->sectionId = (int) $section->getKey();
         $this->pageId = $page?->getKey();
         $this->preview = $preview;
+        $this->draftAuthorized = false;
+        $this->readAuthorized = false;
     }
 
     public function clear(): void
@@ -26,6 +32,8 @@ final class SectionImageContext
         $this->sectionId = null;
         $this->pageId = null;
         $this->preview = false;
+        $this->draftAuthorized = false;
+        $this->readAuthorized = false;
     }
 
     public function section(): Section
@@ -51,21 +59,39 @@ final class SectionImageContext
         $actor = auth()->user()?->fresh();
 
         abort_if($actor === null, 403);
-        Gate::forUser($actor)->authorize('viewDraft', $section);
+        $this->draftAuthorized = Gate::forUser($actor)->allows('viewDraft', $section);
 
         if ($this->pageId !== null) {
             $page = $this->page();
             abort_if($page === null, 403);
             Gate::forUser($actor)->authorize('preview', $page);
-            abort_unless($page->sections()->whereKey($section->getKey())->exists(), 403);
+            $relationship = $this->preview && $page->page_version !== null
+                ? $page->draftSections()
+                : $page->sections();
+            abort_unless($relationship->whereKey($section->getKey())->exists(), 403);
+        } else {
+            abort_unless($this->draftAuthorized, 403);
         }
 
+        $this->readAuthorized = true;
+
         return $section;
+    }
+
+    public function canReadDraft(): bool
+    {
+        return $this->draftAuthorized;
+    }
+
+    public function hasAuthorizedRead(): bool
+    {
+        return $this->readAuthorized;
     }
 
     public function authorizeUpload(): Section
     {
         $section = $this->authorizeRead();
+        abort_unless($this->draftAuthorized, 403);
         abort_unless($section->content_version !== null, 403);
         $actor = auth()->user()?->fresh();
 
