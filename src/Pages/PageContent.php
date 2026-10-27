@@ -283,7 +283,7 @@ final class PageContent
                 ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
-            $publishedProvenance = DB::table('page_legacy_occurrences')
+            $legacyOccurrenceProvenance = DB::table('page_legacy_occurrences')
                 ->where('page_id', $fresh->getKey())
                 ->whereIn('section_id', $sectionIds)
                 ->orderBy('id')
@@ -301,6 +301,9 @@ final class PageContent
             $selected = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->get()->keyBy('id');
             $metadata = $this->draftMetadata($fresh);
             $composition = $this->pages->composition($metadata['template']);
+            $fixedSlotBaselines = $composition['mode'] === 'fixed'
+                ? collect($this->rawRows($fresh->getKey(), 'published'))->keyBy('slot')
+                : collect();
             $normalizedRows = [];
             foreach ($rows as $index => $row) {
                 $section = $selected->get($row['section_id']);
@@ -317,7 +320,7 @@ final class PageContent
                 }
                 $provenance = null;
                 if ($pivot === null && $section->type === 'about-banner') {
-                    $originalOccurrences = $publishedProvenance->get($section->getKey(), collect());
+                    $originalOccurrences = $legacyOccurrenceProvenance->get($section->getKey(), collect());
                     $provenance = $originalOccurrences->first(fn (object $original): bool => ! in_array($original->occurrence_id, $reservedLegacyOccurrences, true));
                     if ($provenance !== null) {
                         $reservedLegacyOccurrences[] = $provenance->occurrence_id;
@@ -329,12 +332,18 @@ final class PageContent
                     throw ValidationException::withMessages(["sections.{$index}.slot" => 'An existing fixed occurrence cannot move to another slot.']);
                 }
                 $this->assertSelectableSection($section, $replacing ? null : $pivot, $provenance);
+                $occurrenceId = $pivot !== null ? $pivot->occurrence_id : ($provenance !== null ? $provenance->occurrence_id : null);
+                if ($composition['mode'] === 'fixed' && $pivot === null
+                    && ! $existing->contains(fn (PageSection $assignment): bool => $assignment->slot === ($row['slot'] ?? null))) {
+                    $baseline = $fixedSlotBaselines->get($row['slot'] ?? '');
+                    $occurrenceId = $baseline['occurrence_id'] ?? null;
+                }
                 $normalizedRows[] = [
                     'pivot' => $pivot,
                     'section' => $section,
                     'slot' => $row['slot'] ?? null,
                     'order_column' => $index + 1,
-                    'occurrence_id' => $pivot !== null ? $pivot->occurrence_id : ($provenance !== null ? $provenance->occurrence_id : null),
+                    'occurrence_id' => $occurrenceId,
                 ];
             }
 
