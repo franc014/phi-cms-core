@@ -154,7 +154,7 @@ class PageCommand extends Command
                 'assignments' => DB::table('page_section')->where('page_id', $current->getKey())->get()->map(fn (object $row): array => (array) $row)->all(),
                 'urls' => DB::table('page_urls')->where('page_id', $current->getKey())->get()->map(fn (object $row): array => (array) $row)->all(),
             ];
-            $path = 'phi-cms/pages/'.$current->getKey().'/rollback-'.now()->format('YmdHis').'-'.Str::random(8).'.json';
+            $path = 'phi-cms/pages/' . $current->getKey() . '/rollback-' . now()->format('YmdHis') . '-' . Str::random(8) . '.json';
             if (! Storage::disk('local')->put($path, json_encode($export, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 'private')) {
                 throw new RuntimeException('The rollback recovery export could not be written.');
             }
@@ -187,7 +187,7 @@ class PageCommand extends Command
     private function requireBackup(): void
     {
         $backup = $this->option('backup');
-        if (! is_string($backup) || ! is_file($backup) || filesize($backup) === 0 || str_starts_with((string) realpath($backup), public_path().DIRECTORY_SEPARATOR)) {
+        if (! is_string($backup) || ! is_file($backup) || filesize($backup) === 0 || str_starts_with((string) realpath($backup), public_path() . DIRECTORY_SEPARATOR)) {
             throw new RuntimeException('A non-empty private database backup is required.');
         }
     }
@@ -234,6 +234,6 @@ class PageCommand extends Command
             throw new RuntimeException('Report names must be plain .json filenames, not paths.');
         }
 
-        return 'phi-cms/pages/'.$this->argument('page').'/'.$filename;
+        return 'phi-cms/pages/' . $this->argument('page') . '/' . $filename;
     }
 }

@@ -36,7 +36,7 @@ class ManagePageSections extends ManageRelatedRecords
     #[Locked]
     public ?int $pageVersion = null;
 
-    public function mount(int|string $record): void
+    public function mount(int | string $record): void
     {
         parent::mount($record);
         $this->pageVersion = $this->getOwnerRecord()->page_version;
@@ -127,7 +127,7 @@ class ManagePageSections extends ManageRelatedRecords
             ]);
     }
 
-    public function reorderTable(array $order, int|string|null $draggedRecordKey = null): void
+    public function reorderTable(array $order, int | string | null $draggedRecordKey = null): void
     {
         if ($this->getOwnerRecord()->fresh()->page_version !== null) {
             $rows = collect($this->draftRows())->keyBy('pivot_id');
@@ -151,7 +151,7 @@ class ManagePageSections extends ManageRelatedRecords
         });
     }
 
-    public function getRelationship(): Relation|Builder
+    public function getRelationship(): Relation | Builder
     {
         $page = $this->getOwnerRecord();
 
