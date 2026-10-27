@@ -1,8 +1,8 @@
 <div class="space-y-6 bg-gray-50 p-4 text-gray-900 dark:bg-gray-950 dark:text-gray-100"
     x-data
-    x-on:phi-page-editor-focus="$nextTick(() => { $dispatch('open-section', { id: 'preview-page-fields' }); $nextTick(() => { const editor = $refs.pageEditor; const target = editor?.querySelector('[aria-invalid=true]') ?? editor?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled])'); target?.focus(); }); })"
-    x-on:phi-section-editor-focus="$nextTick(() => { $dispatch('open-section', { id: 'preview-section-editor' }); $nextTick(() => { $refs.editorForm?.scrollIntoView({ behavior: 'smooth', block: 'start' }); $refs.editorForm?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true }); }); })"
-    x-on:phi-section-editor-scroll="$nextTick(() => { $dispatch('open-section', { id: 'preview-section-editor' }); $nextTick(() => $refs.editorForm?.scrollIntoView({ behavior: 'smooth', block: 'start' })); })">
+    x-on:phi-page-editor-focus="$nextTick(() => { $dispatch('open-section', { id: 'preview-page-fields' }); $nextTick(() => { const editor = $el.querySelector('[x-ref=pageEditor]'); const target = editor?.querySelector('[aria-invalid=true]') ?? editor?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled])'); target?.focus(); }); })"
+    x-on:phi-section-editor-focus="$nextTick(() => { $dispatch('open-section', { id: 'preview-section-editor' }); $nextTick(() => { const editor = $el.querySelector('[x-ref=editorForm]'); editor?.scrollIntoView({ behavior: 'instant', block: 'start' }); editor?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true }); }); })"
+    x-on:phi-section-editor-scroll="$nextTick(() => { $dispatch('open-section', { id: 'preview-section-editor' }); $nextTick(() => $el.querySelector('[x-ref=editorForm]')?.scrollIntoView({ behavior: 'instant', block: 'start' })); })">
     <header>
         <h1 class="text-2xl font-semibold">{{ $pageMode ? 'Page draft preview' : __('phi-cms-core::workflow.preview') }}</h1>
         <p>{{ $pageMode ? 'This private canvas uses the saved Page draft. Public output remains unchanged until the Page is published.' : __('phi-cms-core::workflow.preview_help') }}</p>
@@ -155,8 +155,8 @@
                 </div>
             @endif
             @if ($selectedSection)
-                <x-filament::section collapsible id="preview-section-editor" :heading="$selectedSection->title" wire:key="preview-section-editor-{{ $selectedSection->id }}">
-                    <form wire:submit="saveDraft" x-ref="editorForm" class="space-y-4">
+                <x-filament::section :collapsible="$pageMode" id="preview-section-editor" :heading="$selectedSection->title" wire:key="preview-section-editor-{{ $selectedSection->id }}">
+                    <form wire:submit="saveDraft" x-ref="editorForm" class="space-y-4" style="min-height: 100dvh">
                         {{ $this->form }}
                         <div class="flex flex-wrap items-center gap-2">
                             @if ($canUpdate)

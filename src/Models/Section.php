@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Enums\SectionStatus;
 use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
@@ -17,6 +18,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
  * @property string $type
  * @property string $title
  * @property string $slug
+ * @property SectionStatus $status
  * @property array<string, mixed>|null $draft_content
  * @property array<string, mixed>|null $published_content
  * @property int|null $content_version
@@ -83,6 +85,9 @@ class Section extends ContentModel
             $current = static::query()->lockForUpdate()->find($this->getKey());
             if ($current === null) {
                 return null;
+            }
+            if (DB::table('page_legacy_occurrences')->where('section_id', $current->getKey())->exists()) {
+                throw ValidationException::withMessages(['content' => 'This Section has retained Page recovery obligations. Keep it until an operator explicitly reconciles that recovery evidence.']);
             }
             $usages = DB::table('page_section')
                 ->join('pages', 'pages.id', '=', 'page_section.page_id')

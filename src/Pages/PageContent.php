@@ -161,15 +161,13 @@ final class PageContent
             ->pluck('occurrence_id')
             ->all();
 
-        $query = $fresh->sections()
-            ->where('sections.type', 'about-banner')
-            ->whereNotNull('page_section.occurrence_id')
-            ->with(['pages']);
+        $query = DB::table('page_legacy_occurrences')->where('page_id', $fresh->getKey());
         if ($draftOccurrences !== []) {
-            $query->whereNotIn('page_section.occurrence_id', $draftOccurrences);
+            $query->whereNotIn('occurrence_id', $draftOccurrences);
         }
 
-        return $query->get()->all();
+        return Section::query()->whereIn('id', $query->pluck('section_id'))
+            ->where('type', 'about-banner')->with(['pages'])->orderBy('id')->get()->all();
     }
 
     /** @return array<int, Section> */
@@ -232,7 +230,7 @@ final class PageContent
     }
 
     /**
-     * @param  list<array{pivot_id: int|null, section_id: int, slot?: int|null}>  $rows
+     * @param  list<array{pivot_id: int|null, section_id: int, slot?: string|null}>  $rows
      */
     public function saveDraftSections(Page $page, array $rows, int $expectedVersion): int
     {
@@ -256,8 +254,8 @@ final class PageContent
             if (($row['pivot_id'] ?? null) !== null && (! is_int($row['pivot_id']) || $row['pivot_id'] < 1)) {
                 throw ValidationException::withMessages(["sections.{$index}.pivot_id" => 'The draft assignment is invalid.']);
             }
-            if (array_key_exists('slot', $row) && $row['slot'] !== null && ! is_int($row['slot'])) {
-                throw ValidationException::withMessages(["sections.{$index}.slot" => 'The slot must be an integer or null.']);
+            if (array_key_exists('slot', $row) && $row['slot'] !== null && ! is_string($row['slot'])) {
+                throw ValidationException::withMessages(["sections.{$index}.slot" => 'The slot must be a declared name or null.']);
             }
             $requestedSectionIds[] = $row['section_id'];
             $pivotId = $row['pivot_id'] ?? null;
@@ -285,18 +283,14 @@ final class PageContent
                 ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
-            $publishedProvenance = PageSection::query()
+            $publishedProvenance = DB::table('page_legacy_occurrences')
                 ->where('page_id', $fresh->getKey())
-                ->where('stage', 'published')
                 ->whereIn('section_id', $sectionIds)
-                ->with('section')
-                ->orderBy('order_column')
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get()
-                ->filter(fn (PageSection $assignment): bool => $assignment->section?->type === 'about-banner')
-                ->keyBy('section_id');
-            $restoredLegacySectionIds = [];
+                ->groupBy('section_id');
+            $reservedLegacyOccurrences = $existing->pluck('occurrence_id')->all();
 
             foreach ($pivotIds as $pivotId) {
                 if (! $existing->has($pivotId)) {
@@ -305,6 +299,8 @@ final class PageContent
             }
 
             $selected = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->get()->keyBy('id');
+            $metadata = $this->draftMetadata($fresh);
+            $composition = $this->pages->composition($metadata['template']);
             $normalizedRows = [];
             foreach ($rows as $index => $row) {
                 $section = $selected->get($row['section_id']);
@@ -313,32 +309,36 @@ final class PageContent
                 }
                 $pivotId = $row['pivot_id'] ?? null;
                 $pivot = $pivotId === null ? null : $existing->get($pivotId);
-                if ($pivot !== null && (int) $pivot->section_id !== $section->getKey()) {
+                $replacing = $pivot !== null && (int) $pivot->section_id !== $section->getKey();
+                $selectableSlot = $composition['mode'] === 'fixed'
+                    && ($composition['slots'][$row['slot'] ?? '']['selectable'] ?? false);
+                if ($replacing && ! $selectableSlot) {
                     throw ValidationException::withMessages(["sections.{$index}.section_id" => 'An existing occurrence cannot be repointed. Remove it and add a new occurrence.']);
                 }
                 $provenance = null;
                 if ($pivot === null && $section->type === 'about-banner') {
-                    if ($existing->contains(fn (PageSection $assignment): bool => (int) $assignment->section_id === $section->getKey())
-                        || in_array($section->getKey(), $restoredLegacySectionIds, true)) {
-                        throw ValidationException::withMessages(["sections.{$index}.section_id" => 'The retained legacy About occurrence may only be restored once.']);
-                    }
-                    $provenance = $publishedProvenance->get($section->getKey());
+                    $originalOccurrences = $publishedProvenance->get($section->getKey(), collect());
+                    $provenance = $originalOccurrences->first(fn (object $original): bool => ! in_array($original->occurrence_id, $reservedLegacyOccurrences, true));
                     if ($provenance !== null) {
-                        $restoredLegacySectionIds[] = $section->getKey();
+                        $reservedLegacyOccurrences[] = $provenance->occurrence_id;
+                    } elseif ($originalOccurrences->isNotEmpty()) {
+                        throw ValidationException::withMessages(["sections.{$index}.section_id" => 'Each retained legacy About occurrence may only be restored once. No missing original occurrence remains.']);
                     }
                 }
-                $this->assertSelectableSection($section, $pivot, $provenance);
+                if ($composition['mode'] === 'fixed' && $pivot !== null && $pivot->slot !== ($row['slot'] ?? null)) {
+                    throw ValidationException::withMessages(["sections.{$index}.slot" => 'An existing fixed occurrence cannot move to another slot.']);
+                }
+                $this->assertSelectableSection($section, $replacing ? null : $pivot, $provenance);
                 $normalizedRows[] = [
                     'pivot' => $pivot,
                     'section' => $section,
                     'slot' => $row['slot'] ?? null,
                     'order_column' => $index + 1,
-                    'occurrence_id' => $provenance?->occurrence_id,
+                    'occurrence_id' => $pivot !== null ? $pivot->occurrence_id : ($provenance !== null ? $provenance->occurrence_id : null),
                 ];
             }
 
-            $metadata = $this->draftMetadata($fresh);
-            $this->validateDraftRows($fresh, $metadata['template'], collect($normalizedRows)->map(fn (array $row): Section => $row['section'])->all(), requireRequired: false);
+            $this->validateDraftRows($fresh, $metadata['template'], $normalizedRows, requireRequired: false);
             $keptIds = [];
             foreach ($normalizedRows as $row) {
                 $pivot = $row['pivot'];
@@ -349,6 +349,7 @@ final class PageContent
                     $keptIds[] = $pivot->getKey();
                     DB::table('page_section')->where('id', $pivot->getKey())->update([
                         'order_column' => $row['order_column'],
+                        'section_id' => $row['section']->getKey(),
                         'slot' => $row['slot'],
                         'updated_at' => now(),
                         'occurrence_id' => $pivot->occurrence_id,
@@ -460,7 +461,7 @@ final class PageContent
                 'page_version' => $expectedVersion + 1,
                 'updated_at' => now(),
             ]);
-            PageUrl::query()->where('page_id', $fresh->getKey())->delete();
+            PageUrl::query()->where('page_id', $fresh->getKey())->where('kind', 'current')->update(['kind' => 'redirect']);
             $this->forgetReview($fresh);
 
             return $expectedVersion + 1;
@@ -529,11 +530,14 @@ final class PageContent
             }
         }
         $sections = Section::query()->whereIn('id', array_values(array_unique(array_column($assignments, 'section_id'))))->orderBy('id')->get()->map(fn (Section $section): array => $section->getRawOriginal())->all();
+        $models = Section::query()->whereIn('id', array_column($assignments, 'section_id'))->get()->keyBy('id');
+        $this->validateDraftRows($fresh, $template, array_map(fn (array $row): array => $row + ['section' => $models->get($row['section_id'])], $assignments), requireRequired: false);
         $inventory = [
             'page' => $fresh->getRawOriginal(),
             'metatags' => $fresh->metatags?->getRawOriginal(),
             'assignments' => $assignments,
             'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
+            'legacy_occurrences' => DB::table('page_legacy_occurrences')->where('page_id', $fresh->getKey())->orderBy('id')->get()->map(fn (object $row): array => (array) $row)->all(),
             'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->orderBy('slug')->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
             'sections' => $sections,
             'template' => $template,
@@ -587,6 +591,13 @@ final class PageContent
                     'occurrence_id' => $occurrence,
                     'updated_at' => $assignment['updated_at'],
                 ]);
+                if ($sections->get($assignment['section_id'])->type === 'about-banner') {
+                    DB::table('page_legacy_occurrences')->insert([
+                        'page_id' => $fresh->getKey(),
+                        'section_id' => $assignment['section_id'],
+                        'occurrence_id' => $occurrence,
+                    ]);
+                }
                 $exists = DB::table('page_section')->where('page_id', $fresh->getKey())->where('stage', 'draft')->where('occurrence_id', $occurrence)->exists();
                 if (! $exists) {
                     DB::table('page_section')->insert([
@@ -697,21 +708,66 @@ final class PageContent
         $this->pages->get($template);
         $composition = $this->pages->composition($template);
         $allowed = $composition['allowed'];
+        $fixed = $composition['mode'] === 'fixed';
+        $slots = $composition['slots'] ?? [];
+        $positions = array_flip(array_keys($slots));
+        $seenSlots = [];
+        $lastPosition = -1;
+        $baseline = [];
+        if ($fixed && $page->page_version !== null) {
+            foreach ([...$this->rawRows($page->getKey(), 'published'), ...$this->rawRows($page->getKey(), 'draft')] as $assignment) {
+                if ($assignment['slot'] !== null) {
+                    $baseline[$assignment['slot']] ??= $assignment;
+                }
+            }
+        }
         foreach ($rows as $row) {
-            $section = $row instanceof Section ? $row : ($row['section'] ?? $row);
+            $section = $row['section'] ?? null;
             if (! $section instanceof Section) {
-                continue;
+                throw ValidationException::withMessages(['sections' => 'A selected Section is unavailable.']);
+            }
+            $slot = $row['slot'] ?? null;
+            if (! $fixed && $slot !== null) {
+                throw ValidationException::withMessages(['sections' => 'Ordered Page templates do not accept fixed slots.']);
+            }
+            if ($fixed) {
+                if (! is_string($slot) || ! isset($slots[$slot]) || isset($seenSlots[$slot])) {
+                    throw ValidationException::withMessages(['sections' => 'Choose each declared fixed slot at most once.']);
+                }
+                if ($positions[$slot] <= $lastPosition) {
+                    throw ValidationException::withMessages(['sections' => 'Fixed slots must retain their declared order.']);
+                }
+                if ($section->type !== $slots[$slot]['type']) {
+                    throw ValidationException::withMessages(['sections' => "The Section is not compatible with fixed slot {$slot}."]);
+                }
+                $original = $baseline[$slot] ?? null;
+                if ($page->page_version !== null) {
+                    $selectable = $slots[$slot]['selectable'] ?? false;
+                    if ((! $selectable && ($original === null || (int) $original['section_id'] !== $section->getKey()))
+                        || ($original !== null && $original['occurrence_id'] !== ($row['occurrence_id'] ?? null))) {
+                        throw ValidationException::withMessages(['sections' => "Fixed slot {$slot} must retain its occurrence identity; replacement is disabled unless explicitly enabled."]);
+                    }
+                }
+                $seenSlots[$slot] = $section;
+                $lastPosition = $positions[$slot];
             }
             $type = (string) $section->type;
-            $legacyAllowed = $type === 'about-banner' && ($row instanceof Section || ($row['occurrence_id'] ?? null) !== null);
+            $legacyAllowed = ! $fixed && $type === 'about-banner' && ($page->page_version === null || ($row['occurrence_id'] ?? null) !== null);
             if (! in_array($type, $allowed, true) && ! $legacyAllowed) {
                 throw ValidationException::withMessages(['sections' => "Section {$section->id} ({$type}) is not compatible with the selected Page template."]);
             }
         }
         if ($requireRequired) {
+            foreach ($slots as $slot => $definition) {
+                $section = $seenSlots[$slot] ?? null;
+                if (($definition['required'] ?? true) && ($section === null || $section->status !== SectionStatus::ACTIVE
+                    || $section->content_version === null || ! is_array($section->published_content))) {
+                    throw ValidationException::withMessages(['sections' => "A published active Section is required in fixed slot {$slot} before publication."]);
+                }
+            }
             foreach ($composition['required'] as $required) {
-                $matching = array_filter($rows, function (array | Section $row) use ($required): bool {
-                    $section = $row instanceof Section ? $row : ($row['section'] ?? $row);
+                $matching = array_filter($rows, function (array $row) use ($required): bool {
+                    $section = $row['section'] ?? null;
 
                     return $section instanceof Section
                         && $section->type === $required
@@ -726,7 +782,7 @@ final class PageContent
         }
     }
 
-    private function assertSelectableSection(Section $section, ?PageSection $existing, ?PageSection $provenance = null): void
+    private function assertSelectableSection(Section $section, ?PageSection $existing, ?object $provenance = null): void
     {
         if ($section->type === 'about-banner' && ($existing !== null || $provenance !== null)) {
             return;
@@ -817,12 +873,14 @@ final class PageContent
                     throw ValidationException::withMessages(['fields.metatags.twitter_card' => 'Twitter card must be summary or summary_large_image.']);
                 }
             }
-            $currentMeta = $this->metadataFromPage($page)['metatags'];
-            foreach (self::READ_ONLY_IMAGE_KEYS as $key) {
-                $currentValue = is_array($currentMeta) ? ($currentMeta[$key] ?? null) : null;
-                if ($fields['metatags'][$key] !== $currentValue) {
-                    throw ValidationException::withMessages(["fields.metatags.{$key}" => 'SEO image references are read-only in this workflow.']);
-                }
+        }
+
+        $currentMeta = $this->metadataFromPage($page)['metatags'];
+        foreach (self::READ_ONLY_IMAGE_KEYS as $key) {
+            $currentValue = is_array($currentMeta) ? ($currentMeta[$key] ?? null) : null;
+            $submittedValue = is_array($fields['metatags']) ? $fields['metatags'][$key] : null;
+            if ($submittedValue !== $currentValue) {
+                throw ValidationException::withMessages(["fields.metatags.{$key}" => 'SEO image references are read-only in this workflow.']);
             }
         }
 
@@ -861,7 +919,7 @@ final class PageContent
         return $draft;
     }
 
-    /** @return list<array{id: int, page_id: int, section_id: int, order_column: int, stage: string, occurrence_id: string|null, slot: int|null, section: Section}> */
+    /** @return list<array{id: int, page_id: int, section_id: int, order_column: int, stage: string, occurrence_id: string|null, slot: string|null, section: Section}> */
     private function draftRows(Page $page): array
     {
         $assignments = DB::table('page_section as assignments')
@@ -893,7 +951,7 @@ final class PageContent
                 'order_column' => (int) $row->order_column,
                 'stage' => (string) $row->stage,
                 'occurrence_id' => $row->occurrence_id,
-                'slot' => $row->slot === null ? null : (int) $row->slot,
+                'slot' => $row->slot === null ? null : (string) $row->slot,
                 'section' => $section,
             ];
         })->all();

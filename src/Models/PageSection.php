@@ -16,7 +16,7 @@ use Spatie\EloquentSortable\SortableTrait;
  * @property int $section_id
  * @property string $stage
  * @property string|null $occurrence_id
- * @property int|null $slot
+ * @property string|null $slot
  */
 class PageSection extends Pivot implements Sortable
 {
@@ -98,7 +98,7 @@ class PageSection extends Pivot implements Sortable
             'page_id' => 'integer',
             'section_id' => 'integer',
             'order_column' => 'integer',
-            'slot' => 'integer',
+            'slot' => 'string',
         ];
     }
 }

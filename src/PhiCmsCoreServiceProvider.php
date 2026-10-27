@@ -327,6 +327,8 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             'add_content_snapshots_to_sections_table',
             'add_gallery_image_sources_to_sections_table',
             'create_page_urls_table',
+            'create_page_legacy_occurrences_table',
+            'use_named_slots_on_page_section',
         ];
     }
 }

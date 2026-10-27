@@ -19,6 +19,7 @@ use JFA\PhiCmsCore\Sections\SectionConflict;
 /**
  * @property PageStatus $status
  * @property Carbon|null $published_at
+ * @property int|null $page_version
  */
 class Page extends Model
 {

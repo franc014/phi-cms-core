@@ -1,0 +1,37 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (! Schema::hasColumn('page_section', 'slot')) {
+            return;
+        }
+
+        DB::transaction(function (): void {
+            $triggers = DB::getDriverName() === 'sqlite'
+                ? DB::select("SELECT sql FROM sqlite_master WHERE tbl_name = 'page_section' AND type = 'trigger' AND sql IS NOT NULL")
+                : [];
+            Schema::table('page_section', function (Blueprint $table): void {
+                $column = $table->string('slot')->nullable();
+                if (DB::getDriverName() === 'pgsql') {
+                    $column->using('slot::varchar(255)');
+                }
+                $column->change();
+            });
+            foreach ($triggers as $trigger) {
+                DB::statement($trigger->sql);
+            }
+        });
+    }
+
+    public function down(): void
+    {
+        throw new RuntimeException('Named Page slots cannot safely be converted back to integers. Retain this additive schema during rollback.');
+    }
+};

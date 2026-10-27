@@ -96,8 +96,35 @@ final class PageRegistry
             throw new InvalidArgumentException("Required Sections must be allowed by Page template: {$key}.");
         }
 
-        if ($mode === 'fixed' && (! isset($composition['slots']) || ! is_array($composition['slots']))) {
+        if (array_diff(array_keys($composition), ['mode', 'allowed', 'required', ...($mode === 'fixed' ? ['slots'] : [])]) !== []
+            || count($allowed) !== count(array_unique($allowed))
+            || count($required) !== count(array_unique($required))) {
+            throw new InvalidArgumentException("Invalid composition declaration for Page template: {$key}.");
+        }
+
+        if ($mode !== 'fixed') {
+            return;
+        }
+
+        $slots = $composition['slots'] ?? null;
+        if (! is_array($slots) || $slots === [] || array_is_list($slots)) {
             throw new InvalidArgumentException("Fixed Page templates require slots: {$key}.");
+        }
+
+        foreach ($slots as $slot => $definition) {
+            if (! is_string($slot) || ! preg_match('/\A[a-z][a-z0-9_-]*\z/D', $slot)
+                || ! is_array($definition)
+                || array_diff(array_keys($definition), ['type', 'required', 'selectable']) !== []
+                || ! is_string($definition['type'] ?? null)
+                || ! in_array($definition['type'], $allowed, true)
+                || (array_key_exists('required', $definition) && ! is_bool($definition['required']))
+                || (array_key_exists('selectable', $definition) && ! is_bool($definition['selectable']))) {
+                throw new InvalidArgumentException("Invalid fixed slot declaration for Page template: {$key}.");
+            }
+        }
+
+        if (array_diff($required, array_column($slots, 'type')) !== []) {
+            throw new InvalidArgumentException("Required Sections must have a fixed slot in Page template: {$key}.");
         }
     }
 }
