@@ -775,8 +775,8 @@ final class PageContent
                 }
             }
             foreach ($composition['required'] as $required) {
-                $matching = array_filter($rows, function (array $row) use ($required): bool {
-                    $section = $row['section'] ?? null;
+                $matching = array_filter($rows, function (array | Section $row) use ($required): bool {
+                    $section = $row instanceof Section ? $row : ($row['section'] ?? null);
 
                     return $section instanceof Section
                         && $section->type === $required
