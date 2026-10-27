@@ -61,7 +61,24 @@ class ShieldRoleSeeder extends Seeder
         return array_unique(array_merge(
             $this->adminPermissions(),
             $this->frontendEditorPermissions(),
+            $this->workflowPermissions(),
         ));
+    }
+
+    /**
+     * Page and Section workflow authority stays independent from the CRUD grants.
+     *
+     * @return array<int, string>
+     */
+    private function workflowPermissions(): array
+    {
+        return [
+            'Preview:Page',
+            'Compose:Page',
+            'Publish:Page',
+            'ViewDraft:Section',
+            'Publish:Section',
+        ];
     }
 
     /**

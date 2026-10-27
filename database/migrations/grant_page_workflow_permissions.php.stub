@@ -1,0 +1,70 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Spatie\Permission\PermissionRegistrar;
+
+return new class extends Migration
+{
+    /**
+     * @var array<int, string>
+     */
+    private array $permissions = [
+        'Preview:Page',
+        'Compose:Page',
+        'Publish:Page',
+        'ViewDraft:Section',
+        'Publish:Section',
+    ];
+
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        if (! Schema::hasTable('permissions') || ! Schema::hasTable('roles') || ! Schema::hasTable('role_has_permissions')) {
+            return;
+        }
+
+        $now = now();
+
+        foreach ($this->permissions as $name) {
+            DB::table('permissions')->insertOrIgnore([
+                'name' => $name,
+                'guard_name' => 'web',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $roleId = DB::table('roles')
+            ->where('name', 'super_admin')
+            ->where('guard_name', 'web')
+            ->value('id');
+
+        if ($roleId !== null) {
+            $permissionIds = DB::table('permissions')
+                ->whereIn('name', $this->permissions)
+                ->where('guard_name', 'web')
+                ->pluck('id');
+
+            foreach ($permissionIds as $permissionId) {
+                DB::table('role_has_permissions')->insertOrIgnore([
+                    'permission_id' => $permissionId,
+                    'role_id' => $roleId,
+                ]);
+            }
+        }
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        // Additive grants are retained; removing them would break running installs.
+    }
+};
