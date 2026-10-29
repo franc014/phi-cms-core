@@ -5,6 +5,7 @@ namespace JFA\PhiCmsCore\Resources\Pages\Pages;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 use Illuminate\Support\Arr;
+use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
@@ -27,10 +28,13 @@ class ListPages extends ListRecords
                 ->schema(PageCreationForm::components())
                 ->using(function (array $data): Page {
                     $submissionToken = $data['_submission_token'] ?? null;
+                    if (! is_string($submissionToken) || $submissionToken === '') {
+                        throw ValidationException::withMessages(['_submission_token' => 'Reopen the creation action and try again.']);
+                    }
 
                     return app(PageContent::class)->createDraft(
                         Arr::except($data, ['_submission_token']),
-                        is_string($submissionToken) ? $submissionToken : null,
+                        $submissionToken,
                     );
                 })
                 ->successNotificationTitle('Draft Page created')

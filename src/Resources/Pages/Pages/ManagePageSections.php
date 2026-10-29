@@ -44,7 +44,7 @@ class ManagePageSections extends ManageRelatedRecords
     #[Locked]
     public ?int $pageVersion = null;
 
-    public function mount(int | string $record): void
+    public function mount(int|string $record): void
     {
         parent::mount($record);
         $this->pageVersion = $this->getOwnerRecord()->page_version;
@@ -78,6 +78,10 @@ class ManagePageSections extends ManageRelatedRecords
                 ->columns([
                     TextColumn::make('section.title')->label('Section'),
                     TextColumn::make('section.status')->label('Availability'),
+                    TextColumn::make('publication')->label('Publication')
+                        ->state(fn (PageSection $record): string => $record->section->content_version !== null && $record->section->published_content === null
+                            ? 'Unpublished Section'
+                            : 'Published Section'),
                 ])
                 ->reorderable('order_column')
                 ->authorizeReorder(fn (): bool => static::canAccess(['record' => $this->getOwnerRecord()]))
@@ -92,6 +96,7 @@ class ManagePageSections extends ManageRelatedRecords
                                 ->default(fn (): string => app(PageContent::class)->issueSubmissionToken('create-section', (int) $this->getOwnerRecord()->getKey())),
                         ])
                         ->action(function (array $data): void {
+                            $submissionToken = $this->requiredSubmissionToken($data);
                             $page = $this->getOwnerRecord()->fresh();
 
                             try {
@@ -100,7 +105,7 @@ class ManagePageSections extends ManageRelatedRecords
                                     ['title' => $data['title'] ?? null],
                                     Arr::only($data, ['section_title', 'items']),
                                     (int) $this->pageVersion,
-                                    is_string($data['_submission_token'] ?? null) ? $data['_submission_token'] : null,
+                                    $submissionToken,
                                 );
                             } catch (PageConflict $exception) {
                                 throw ValidationException::withMessages(['title' => $exception->getMessage()]);
@@ -130,7 +135,7 @@ class ManagePageSections extends ManageRelatedRecords
                                     $source = Section::query()->find((int) $state);
                                     if ($source !== null && $get('_title_edited') !== true) {
                                         $copySuffix = ' — Copy';
-                                        $set('title', mb_substr($source->title, 0, 100 - mb_strlen($copySuffix)) . $copySuffix);
+                                        $set('title', mb_substr($source->title, 0, 100 - mb_strlen($copySuffix)).$copySuffix);
                                     }
                                     $set('_source_version', $preview['version']);
                                 }),
@@ -156,7 +161,7 @@ class ManagePageSections extends ManageRelatedRecords
                                         );
 
                                         return json_encode($preview['content'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: 'Published content unavailable.';
-                                    } catch (ValidationException | PageConflict) {
+                                    } catch (ValidationException|PageConflict) {
                                         return 'Published content is no longer available. Refresh the source list.';
                                     }
                                 }),
@@ -166,6 +171,7 @@ class ManagePageSections extends ManageRelatedRecords
                                 ->default(fn (): string => app(PageContent::class)->issueSubmissionToken('copy-section', (int) $this->getOwnerRecord()->getKey())),
                         ])
                         ->action(function (array $data): void {
+                            $submissionToken = $this->requiredSubmissionToken($data);
                             $page = $this->getOwnerRecord()->fresh();
                             $source = Section::query()->findOrFail((int) $data['source_section_id']);
                             $sourceVersion = filter_var($data['_source_version'] ?? null, FILTER_VALIDATE_INT);
@@ -180,7 +186,7 @@ class ManagePageSections extends ManageRelatedRecords
                                     ['title' => $data['title'] ?? null],
                                     (int) $this->pageVersion,
                                     $sourceVersion,
-                                    is_string($data['_submission_token'] ?? null) ? $data['_submission_token'] : null,
+                                    $submissionToken,
                                 );
                             } catch (PageConflict $exception) {
                                 throw ValidationException::withMessages(['source_section_id' => $exception->getMessage()]);
@@ -248,7 +254,7 @@ class ManagePageSections extends ManageRelatedRecords
             ]);
     }
 
-    public function reorderTable(array $order, int | string | null $draggedRecordKey = null): void
+    public function reorderTable(array $order, int|string|null $draggedRecordKey = null): void
     {
         if ($this->getOwnerRecord()->fresh()->page_version !== null) {
             $rows = collect($this->draftRows())->keyBy('pivot_id');
@@ -272,7 +278,7 @@ class ManagePageSections extends ManageRelatedRecords
         });
     }
 
-    public function getRelationship(): Relation | Builder
+    public function getRelationship(): Relation|Builder
     {
         $page = $this->getOwnerRecord();
 
@@ -320,5 +326,16 @@ class ManagePageSections extends ManageRelatedRecords
             && $actor->can('preview', $page)
             && $actor->can('compose', $page)
             && $actor->can('create', new Section);
+    }
+
+    /** @param array<string, mixed> $data */
+    private function requiredSubmissionToken(array $data): string
+    {
+        $token = $data['_submission_token'] ?? null;
+        if (! is_string($token) || $token === '') {
+            throw ValidationException::withMessages(['_submission_token' => 'Reopen the creation action and try again.']);
+        }
+
+        return $token;
     }
 }
