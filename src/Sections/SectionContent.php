@@ -78,7 +78,7 @@ final class SectionContent
             }
 
             $snapshot = $source === 'draft' ? $section->draft_content : $section->published_content;
-            if ($preview && ! is_array($snapshot)) {
+            if (! is_array($snapshot)) {
                 $rendered[$section->id] = ['view' => $view, 'content' => [], 'source' => 'unavailable', 'unavailable' => true];
 
                 continue;

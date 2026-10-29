@@ -10,6 +10,11 @@
     <div class="grid gap-6 xl:grid-cols-3">
         @if ($page)
             <div class="min-w-0 xl:col-span-2" aria-label="{{ __('phi-cms-core::workflow.canvas') }}">
+                @if ($pageMode && count($pageRows) === 0)
+                    <div role="status" class="mb-6 rounded border border-dashed border-gray-400 bg-white p-6 text-sm text-gray-700 dark:bg-gray-900 dark:text-gray-300">
+                        This Page has no Sections yet. Add a shared, new, or copied Services Section from the Draft sections workspace. A published Services Section is required before this Page can be published.
+                    </div>
+                @endif
                 @include($pageTemplateView, ['page' => $page, 'sections' => $sections, 'preview' => true])
             </div>
         @endif

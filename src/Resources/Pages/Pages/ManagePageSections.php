@@ -5,14 +5,21 @@ namespace JFA\PhiCmsCore\Resources\Pages\Pages;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
 use Filament\Actions\EditAction;
+use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Resources\Pages\ManageRelatedRecords;
+use Filament\Schemas\Components\Component;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Models\Page;
@@ -23,6 +30,7 @@ use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Resources\Sections\SectionResource;
 use JFA\PhiCmsCore\Sections\LegacySectionGuard;
+use JFA\PhiCmsCore\Sections\SectionRegistry;
 use Livewire\Attributes\Locked;
 
 class ManagePageSections extends ManageRelatedRecords
@@ -74,6 +82,112 @@ class ManagePageSections extends ManageRelatedRecords
                 ->reorderable('order_column')
                 ->authorizeReorder(fn (): bool => static::canAccess(['record' => $this->getOwnerRecord()]))
                 ->headerActions([
+                    Action::make('createAndAddSection')
+                        ->label('Create and add Services')
+                        ->authorize(fn (): bool => $this->canCreateSection())
+                        ->schema([
+                            TextInput::make('title')->label('Library title')->required()->maxLength(100),
+                            ...$this->servicesFields(),
+                            Hidden::make('_submission_token')
+                                ->default(fn (): string => app(PageContent::class)->issueSubmissionToken('create-section', (int) $this->getOwnerRecord()->getKey())),
+                        ])
+                        ->action(function (array $data): void {
+                            $page = $this->getOwnerRecord()->fresh();
+
+                            try {
+                                $result = app(PageContent::class)->createSection(
+                                    $page,
+                                    ['title' => $data['title'] ?? null],
+                                    Arr::only($data, ['section_title', 'items']),
+                                    (int) $this->pageVersion,
+                                    is_string($data['_submission_token'] ?? null) ? $data['_submission_token'] : null,
+                                );
+                            } catch (PageConflict $exception) {
+                                throw ValidationException::withMessages(['title' => $exception->getMessage()]);
+                            }
+                            $this->pageVersion = $result['page_version'];
+                            $this->resetTable();
+                        }),
+                    Action::make('copyAndAddSection')
+                        ->label('Copy published Services')
+                        ->authorize(fn (): bool => $this->canCreateSection())
+                        ->schema([
+                            Select::make('source_section_id')
+                                ->label('Published Services source')
+                                ->options(fn (): array => collect(app(PageContent::class)->copyableSections($this->getOwnerRecord()))->pluck('title', 'id')->all())
+                                ->required()
+                                ->searchable()
+                                ->live()
+                                ->afterStateUpdated(function (Get $get, Set $set, mixed $state): void {
+                                    if (! is_numeric($state)) {
+                                        return;
+                                    }
+                                    $preview = app(PageContent::class)->copyableSectionPreview(
+                                        $this->getOwnerRecord(),
+                                        (int) $state,
+                                        is_string($get('_submission_token')) ? $get('_submission_token') : null,
+                                    );
+                                    $source = Section::query()->find((int) $state);
+                                    if ($source !== null && $get('_title_edited') !== true) {
+                                        $copySuffix = ' — Copy';
+                                        $set('title', mb_substr($source->title, 0, 100 - mb_strlen($copySuffix)) . $copySuffix);
+                                    }
+                                    $set('_source_version', $preview['version']);
+                                }),
+                            TextInput::make('title')
+                                ->label('Library title')
+                                ->required()
+                                ->maxLength(100)
+                                ->afterStateUpdated(function (Set $set): void {
+                                    $set('_title_edited', true);
+                                }),
+                            Placeholder::make('published_snapshot')
+                                ->label('Published content (read-only)')
+                                ->content(function (Get $get): string {
+                                    if (! is_numeric($get('source_section_id'))) {
+                                        return 'Choose a published Services source to review its public text.';
+                                    }
+
+                                    try {
+                                        $preview = app(PageContent::class)->copyableSectionPreview(
+                                            $this->getOwnerRecord(),
+                                            (int) $get('source_section_id'),
+                                            is_string($get('_submission_token')) ? $get('_submission_token') : null,
+                                        );
+
+                                        return json_encode($preview['content'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: 'Published content unavailable.';
+                                    } catch (ValidationException | PageConflict) {
+                                        return 'Published content is no longer available. Refresh the source list.';
+                                    }
+                                }),
+                            Hidden::make('_title_edited')->default(false)->dehydrated(false),
+                            Hidden::make('_source_version')->default(null),
+                            Hidden::make('_submission_token')
+                                ->default(fn (): string => app(PageContent::class)->issueSubmissionToken('copy-section', (int) $this->getOwnerRecord()->getKey())),
+                        ])
+                        ->action(function (array $data): void {
+                            $page = $this->getOwnerRecord()->fresh();
+                            $source = Section::query()->findOrFail((int) $data['source_section_id']);
+                            $sourceVersion = filter_var($data['_source_version'] ?? null, FILTER_VALIDATE_INT);
+                            if ($sourceVersion === false || $sourceVersion < 1) {
+                                throw ValidationException::withMessages(['source_section_id' => 'Review the published source before copying it.']);
+                            }
+
+                            try {
+                                $result = app(PageContent::class)->copySection(
+                                    $page,
+                                    $source,
+                                    ['title' => $data['title'] ?? null],
+                                    (int) $this->pageVersion,
+                                    $sourceVersion,
+                                    is_string($data['_submission_token'] ?? null) ? $data['_submission_token'] : null,
+                                );
+                            } catch (PageConflict $exception) {
+                                throw ValidationException::withMessages(['source_section_id' => $exception->getMessage()]);
+                            }
+                            $this->pageVersion = $result['page_version'];
+                            $this->resetTable();
+                        }),
                     Action::make('addSection')->label('Add existing Section')
                         ->schema([Select::make('section_id')->label('Section')->required()
                             ->options(fn (): array => collect(app(PageContent::class)->selectableSections($this->getOwnerRecord()))->pluck('title', 'id')->all())])
@@ -119,6 +233,13 @@ class ManagePageSections extends ManageRelatedRecords
             ->headerActions([
                 CreateAction::make()
                     ->databaseTransaction()
+                    ->before(function (array $data): void {
+                        if (config('phi-cms.editing', false) && ($data['type'] ?? null) === 'services') {
+                            throw ValidationException::withMessages([
+                                'type' => __('phi-cms-core::phi-cms-core.services_creation_workflow_required'),
+                            ]);
+                        }
+                    })
                     ->beforeFormValidated(function (): void {
                         /** @var Page $page */
                         $page = $this->getOwnerRecord();
@@ -181,5 +302,23 @@ class ManagePageSections extends ManageRelatedRecords
         } catch (PageConflict $exception) {
             throw ValidationException::withMessages(['sections' => $exception->getMessage()]);
         }
+    }
+
+    /** @return list<Component> */
+    private function servicesFields(): array
+    {
+        return app(SectionRegistry::class)->get('services')::fields();
+    }
+
+    private function canCreateSection(): bool
+    {
+        $page = $this->getOwnerRecord()->fresh();
+        $actor = auth()->user()?->fresh();
+
+        return config('phi-cms.editing', false)
+            && $actor !== null
+            && $actor->can('preview', $page)
+            && $actor->can('compose', $page)
+            && $actor->can('create', new Section);
     }
 }

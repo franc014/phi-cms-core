@@ -22,23 +22,25 @@ class SectionsTable
         return [
             Action::make('activate')
                 ->label(__('phi-cms-core::phi-cms-core.activate'))
+                ->authorize('update')
                 ->action(function ($record) {
                     $record->activate();
                 })
                 ->color('success')
                 ->icon(Heroicon::Check)
                 ->hidden(function ($record) {
-                    return $record->status->value === 'active';
+                    return $record->content_version !== null || $record->status->value === 'active';
                 }),
             Action::make('deactivate')
                 ->label(__('phi-cms-core::phi-cms-core.deactivate'))
+                ->authorize('update')
                 ->action(function ($record) {
                     $record->deactivate();
                 })
                 ->icon(Heroicon::NoSymbol)
                 ->color('warning')
                 ->hidden(function ($record) {
-                    return $record->status->value === 'inactive';
+                    return $record->content_version !== null || $record->status->value === 'inactive';
                 }),
         ];
     }
@@ -73,6 +75,12 @@ class SectionsTable
             ->recordActions([
                 ...self::customActions(),
                 ReplicateAction::make()
+                    ->visible(fn (Section $record): bool => $record->content_version === null
+                        && (! config('phi-cms.editing', false) || $record->type !== 'services'))
+                    ->authorize(fn (Section $record): bool => $record->content_version === null
+                        && (! config('phi-cms.editing', false) || $record->type !== 'services')
+                        && auth()->user()?->can('create', new Section) === true
+                        && auth()->user()?->can('replicate', $record) === true)
                     ->beforeReplicaSaved(function (Section $replica): void {
                         $replica->title = $replica->title . '-Copy';
                         $replica->slug = $replica->slug . '-copy';

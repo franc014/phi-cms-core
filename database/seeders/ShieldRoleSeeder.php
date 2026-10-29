@@ -77,7 +77,9 @@ class ShieldRoleSeeder extends Seeder
             'Compose:Page',
             'Publish:Page',
             'ViewDraft:Section',
+            'Use:Section',
             'Publish:Section',
+            'Replicate:Section',
         ];
     }
 

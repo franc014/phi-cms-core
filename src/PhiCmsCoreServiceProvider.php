@@ -329,6 +329,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             'create_page_urls_table',
             'create_page_legacy_occurrences_table',
             'use_named_slots_on_page_section',
+            'create_page_action_submissions_table',
         ];
     }
 }

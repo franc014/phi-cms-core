@@ -21,6 +21,14 @@ use JFA\PhiCmsCore\Sections\SectionRegistry;
 
 final class PageContent
 {
+    private const SUBMISSIONS_TABLE = 'phi_cms_page_action_submissions';
+
+    /** @var list<string> */
+    private const CREATION_FIELDS = ['title', 'slug', 'description', 'template'];
+
+    /** @var list<string> */
+    private const SECTION_CREATION_FIELDS = ['title'];
+
     /** @var list<string> */
     private const METATAG_KEYS = [
         'title',
@@ -42,6 +50,201 @@ final class PageContent
         private PageRegistry $pages,
         private SectionRegistry $sections,
     ) {}
+
+    /**
+     * Issue a server-side token for one modal submission.
+     *
+     * The token is deliberately private to the authenticated actor and
+     * session. It allows a lost response to be retried without creating a
+     * second Page or Section while keeping the public write methods useful to
+     * trusted package callers that do not need idempotency.
+     */
+    public function issueSubmissionToken(string $operation, ?int $pageId = null, ?int $sourceId = null): string
+    {
+        $this->ensureEditingEnabled();
+
+        if (! in_array($operation, ['create-page', 'create-section', 'copy-section'], true)) {
+            throw ValidationException::withMessages(['submission' => 'The submission action is invalid.']);
+        }
+
+        $actor = auth()->user()?->fresh();
+        abort_if($actor === null, 403);
+
+        $page = $pageId === null ? null : Page::query()->findOrFail($pageId);
+        if ($operation === 'create-page') {
+            abort_if($page !== null || $sourceId !== null, 422);
+            Gate::forUser($actor)->authorize('create', new Page);
+            Gate::forUser($actor)->authorize('preview', new Page);
+        } else {
+            abort_if($page === null || $sourceId !== null && $operation !== 'copy-section', 422);
+            Gate::forUser($actor)->authorize('preview', $page);
+            Gate::forUser($actor)->authorize('compose', $page);
+            Gate::forUser($actor)->authorize('create', new Section);
+            $this->assertAdopted($page);
+        }
+
+        $token = Str::random(64);
+        DB::table(self::SUBMISSIONS_TABLE)->insert([
+            'token' => $token,
+            'operation' => $operation,
+            'actor_id' => (string) $actor->getAuthIdentifier(),
+            'session_id' => session()->getId(),
+            'page_id' => $page?->getKey(),
+            'source_id' => $sourceId,
+            'fingerprint' => null,
+            'result' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $token;
+    }
+
+    /**
+     * Create the private Page identity before any relationship composition.
+     *
+     * @param  array<string, mixed>  $fields
+     */
+    public function createDraft(array $fields, ?string $submissionToken = null): Page
+    {
+        $this->ensureEditingEnabled();
+        $this->authorize('create', new Page);
+        $this->authorize('preview', new Page);
+        $metadata = $this->validateCreationMetadata($fields);
+        $fingerprint = $this->submissionFingerprint('create-page', null, null, $metadata);
+
+        return $this->transaction(function () use ($metadata, $fingerprint, $submissionToken): Page {
+            $this->authorize('create', new Page);
+            $this->authorize('preview', new Page);
+            $previous = $this->lockSubmission($submissionToken, 'create-page', null, null, $fingerprint);
+            if ($previous !== null) {
+                return Page::query()->findOrFail((int) $previous['page_id']);
+            }
+
+            $now = now();
+            $pageId = DB::table('pages')->insertGetId([
+                'title' => $metadata['title'],
+                'slug' => $metadata['slug'],
+                'description' => $metadata['description'],
+                'status' => PageStatus::DRAFT->value,
+                'route' => '',
+                'published_at' => null,
+                'template' => $metadata['template'],
+                'draft_fields' => json_encode($metadata + ['metatags' => $this->emptyMetatags()], JSON_THROW_ON_ERROR),
+                'page_version' => 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $result = ['page_id' => (int) $pageId];
+            $this->completeSubmission($submissionToken, $result);
+
+            return Page::query()->findOrFail($pageId);
+        });
+    }
+
+    /**
+     * Create a valid unpublished Services Section and its draft occurrence
+     * atomically.
+     *
+     * @param  array<string, mixed>  $fields
+     * @param  array<string, mixed>  $content
+     * @return array{section_id: int, page_version: int}
+     */
+    public function createSection(Page $page, array $fields, array $content, int $expectedVersion, ?string $submissionToken = null): array
+    {
+        $this->ensureEditingEnabled();
+        $this->authorize('preview', $page);
+        $this->authorize('compose', $page);
+        $this->authorize('create', new Section);
+        $title = $this->validateSectionCreationFields($fields);
+        $normalized = $this->normalizeServicesContent($content);
+        $fingerprint = $this->submissionFingerprint('create-section', (int) $page->getKey(), null, [
+            'title' => $title,
+            'content' => $normalized,
+            'version' => $expectedVersion,
+        ]);
+
+        return $this->transaction(function () use ($page, $title, $normalized, $expectedVersion, $submissionToken, $fingerprint): array {
+            $previous = $this->lockSubmission($submissionToken, 'create-section', (int) $page->getKey(), null, $fingerprint);
+            $fresh = $this->lockPage($page->getKey());
+            $this->authorize('preview', $fresh);
+            $this->authorize('compose', $fresh);
+            $this->authorize('create', new Section);
+            if ($previous !== null) {
+                return [
+                    'section_id' => (int) $previous['section_id'],
+                    'page_version' => (int) $previous['page_version'],
+                ];
+            }
+            $this->checkVersion($fresh, $expectedVersion);
+            $this->assertServicesCreationPage($fresh);
+            $normalized = $this->normalizeServicesContent($normalized);
+
+            $sectionId = $this->insertNewServicesSection($title, $normalized);
+            $newVersion = $this->appendDraftSection($fresh, $sectionId, $expectedVersion);
+            $result = ['section_id' => $sectionId, 'page_version' => $newVersion];
+            $this->completeSubmission($submissionToken, $result);
+            $this->forgetReview($fresh);
+
+            return $result;
+        });
+    }
+
+    /**
+     * Copy only the current published Services snapshot into a new Section.
+     *
+     * @param  array<string, mixed>  $fields
+     * @return array{section_id: int, page_version: int}
+     */
+    public function copySection(Page $page, Section $source, array $fields, int $expectedVersion, int $expectedSourceVersion, ?string $submissionToken = null): array
+    {
+        $this->ensureEditingEnabled();
+        $this->authorize('preview', $page);
+        $this->authorize('compose', $page);
+        $this->authorize('create', new Section);
+        $this->authorizeCopySourceAccess($source);
+        if ($submissionToken === null) {
+            throw ValidationException::withMessages(['source' => 'Review the published source before copying it.']);
+        }
+        $title = $this->validateSectionCreationFields($fields);
+        $fingerprint = $this->submissionFingerprint('copy-section', (int) $page->getKey(), (int) $source->getKey(), [
+            'title' => $title,
+            'version' => $expectedVersion,
+            'source_version' => $expectedSourceVersion,
+        ]);
+
+        return $this->transaction(function () use ($page, $source, $title, $expectedVersion, $expectedSourceVersion, $submissionToken, $fingerprint): array {
+            $previous = $this->lockSubmission($submissionToken, 'copy-section', (int) $page->getKey(), (int) $source->getKey(), $fingerprint);
+            $fresh = $this->lockPage($page->getKey(), [(int) $source->getKey()]);
+            $this->authorize('preview', $fresh);
+            $this->authorize('compose', $fresh);
+            $sourceFresh = Section::query()->findOrFail((int) $source->getKey());
+            $this->authorizeCopySourceAccess($sourceFresh);
+            $this->authorize('create', new Section);
+            if ($previous !== null) {
+                return [
+                    'section_id' => (int) $previous['section_id'],
+                    'page_version' => (int) $previous['page_version'],
+                ];
+            }
+            $this->checkVersion($fresh, $expectedVersion);
+            $this->assertServicesCreationPage($fresh);
+            $this->assertCopySource($sourceFresh, $expectedSourceVersion);
+            $normalized = $this->normalizeServicesContent($sourceFresh->published_content);
+            if ($this->sections->get('services')::imageReferences($normalized) !== [] || $sourceFresh->getMedia()->isNotEmpty()) {
+                throw ValidationException::withMessages(['source' => 'Only text-only published Services Sections can be copied.']);
+            }
+            $this->assertSubmissionReview($submissionToken, (int) $fresh->getKey(), $sourceFresh, $normalized);
+
+            $sectionId = $this->insertNewServicesSection($title, $normalized);
+            $newVersion = $this->appendDraftSection($fresh, $sectionId, $expectedVersion);
+            $result = ['section_id' => $sectionId, 'page_version' => $newVersion];
+            $this->completeSubmission($submissionToken, $result);
+            $this->forgetReview($fresh);
+
+            return $result;
+        });
+    }
 
     /**
      * @return array{page: Page, redirect_slug: string|null}
@@ -187,12 +390,66 @@ final class PageContent
             ->whereIn('type', $allowed)
             ->where('status', SectionStatus::ACTIVE)
             ->whereNotNull('content_version')
+            ->select(['id', 'title', 'type', 'status', 'content_version', 'published_content'])
             ->orderBy('title')
             ->orderBy('id')
             ->get()
-            ->filter(fn (Section $section): bool => Gate::forUser($actor)->allows('view', $section))
+            ->filter(fn (Section $section): bool => Gate::forUser($actor)->allows('view', $section)
+                && Gate::forUser($actor)->allows('useInPage', $section))
             ->values()
             ->all();
+    }
+
+    /** @return array<int, Section> */
+    public function copyableSections(Page $page): array
+    {
+        $fresh = $this->authorizePreview($page);
+        $this->authorize('compose', $fresh);
+        $this->authorize('create', new Section);
+        $actor = auth()->user()?->fresh();
+        if ($actor === null || ! Gate::forUser($actor)->allows('viewAny', new Section)) {
+            return [];
+        }
+
+        return Section::query()
+            ->where('type', 'services')
+            ->where('status', SectionStatus::ACTIVE)
+            ->whereNotNull('content_version')
+            ->whereNotNull('published_content')
+            ->select(['id', 'title', 'type', 'status', 'content_version'])
+            ->orderBy('title')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (Section $section): bool => Gate::forUser($actor)->allows('view', $section)
+                && Gate::forUser($actor)->allows('useInPage', $section)
+                && Gate::forUser($actor)->allows('replicate', $section))
+            ->values()
+            ->all();
+    }
+
+    /** @return array{version: int, definition_fingerprint: string, content: array<string, mixed>} */
+    public function copyableSectionPreview(Page $page, int $sourceId, ?string $submissionToken = null): array
+    {
+        $freshPage = $this->authorizePreview($page);
+        $this->authorize('compose', $freshPage);
+        $source = Section::query()->findOrFail($sourceId);
+        $this->authorizeCopySource($source, (int) $source->content_version);
+        $content = $this->normalizeServicesContent($source->published_content);
+        if ($this->sections->get('services')::imageReferences($content) !== [] || $source->getMedia()->isNotEmpty()) {
+            throw ValidationException::withMessages(['source' => 'Only text-only published Services Sections can be copied.']);
+        }
+        $this->recordSubmissionReview(
+            $submissionToken,
+            (int) $freshPage->getKey(),
+            (int) $source->getKey(),
+            $this->sourceCopyFingerprint($source, $content),
+        );
+
+        return [
+            'version' => (int) $source->content_version,
+            'definition_fingerprint' => $this->sectionDefinitionFingerprint('services'),
+            'content' => $content,
+        ];
     }
 
     /**
@@ -235,6 +492,7 @@ final class PageContent
     public function saveDraftSections(Page $page, array $rows, int $expectedVersion): int
     {
         $this->ensureEditingEnabled();
+        $this->authorize('preview', $page);
         $this->authorize('compose', $page);
         $this->assertAdopted($page);
 
@@ -271,6 +529,7 @@ final class PageContent
 
         return $this->transaction(function () use ($page, $rows, $expectedVersion, $sectionIds, $pivotIds): int {
             $fresh = $this->lockPage($page->getKey(), $sectionIds);
+            $this->authorize('preview', $fresh);
             $this->authorize('compose', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
 
@@ -811,6 +1070,9 @@ final class PageContent
             throw ValidationException::withMessages(['sections' => "Section {$section->id} is not available through the adopted Section workflow."]);
         }
         $this->authorizeSection('view', $section);
+        if ($existing === null) {
+            $this->authorizeSection('useInPage', $section);
+        }
     }
 
     private function assertAdoptableSource(Section $section): void
@@ -1125,6 +1387,8 @@ final class PageContent
 
     private function syncUrls(Page $page, string $newSlug): void
     {
+        $hadPublicPublication = $page->getRawOriginal('published_at') !== null
+            || PageUrl::query()->where('page_id', $page->getKey())->exists();
         $pageClaim = Page::query()
             ->whereKeyNot($page->getKey())
             ->where('slug', $newSlug)
@@ -1143,7 +1407,7 @@ final class PageContent
         }
 
         $oldSlug = (string) $page->getRawOriginal('slug');
-        if ($oldSlug !== $newSlug) {
+        if ($hadPublicPublication && $oldSlug !== $newSlug) {
             $old = PageUrl::query()->where('slug', $oldSlug)->lockForUpdate()->first();
             if ($old === null) {
                 PageUrl::query()->create(['slug' => $oldSlug, 'page_id' => $page->getKey(), 'kind' => 'redirect']);
@@ -1159,6 +1423,301 @@ final class PageContent
         if ($page->page_version === null || ! is_string($page->template) || ! $this->pages->has($page->template)) {
             throw ValidationException::withMessages(['page' => 'This Page has not completed a supported adoption.']);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $fields
+     * @return array{title: string, slug: string, description: string, template: string}
+     */
+    private function validateCreationMetadata(array $fields): array
+    {
+        $unknown = array_diff(array_keys($fields), self::CREATION_FIELDS);
+        if ($unknown !== []) {
+            throw ValidationException::withMessages(['fields' => 'Unknown Page creation fields: ' . implode(', ', $unknown) . '.']);
+        }
+
+        foreach (self::CREATION_FIELDS as $field) {
+            if (! array_key_exists($field, $fields)) {
+                throw ValidationException::withMessages(["fields.{$field}" => "The {$field} field is required."]);
+            }
+        }
+
+        foreach (['title', 'description'] as $field) {
+            if (! is_string($fields[$field]) || trim($fields[$field]) === '') {
+                throw ValidationException::withMessages(["fields.{$field}" => "The {$field} field is required."]);
+            }
+        }
+
+        if (mb_strlen($fields['title']) > 100) {
+            throw ValidationException::withMessages(['fields.title' => 'The title must be 100 characters or fewer.']);
+        }
+
+        if (! is_string($fields['slug']) || mb_strlen($fields['slug']) > 100 || ! preg_match('/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/D', $fields['slug'])) {
+            throw ValidationException::withMessages(['fields.slug' => 'The slug must be a lowercase hyphen-separated URL segment.']);
+        }
+
+        if (! is_string($fields['template']) || ! $this->pages->has($fields['template'])) {
+            throw ValidationException::withMessages(['fields.template' => 'Choose a registered compatible Page template.']);
+        }
+
+        return [
+            'title' => $fields['title'],
+            'slug' => $fields['slug'],
+            'description' => $fields['description'],
+            'template' => $fields['template'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $fields
+     */
+    private function validateSectionCreationFields(array $fields): string
+    {
+        $unknown = array_diff(array_keys($fields), self::SECTION_CREATION_FIELDS);
+        if ($unknown !== []) {
+            throw ValidationException::withMessages(['section' => 'Unknown Section creation fields: ' . implode(', ', $unknown) . '.']);
+        }
+        if (! array_key_exists('title', $fields) || ! is_string($fields['title']) || trim($fields['title']) === '') {
+            throw ValidationException::withMessages(['title' => 'The Section title is required.']);
+        }
+        if (mb_strlen($fields['title']) > 100) {
+            throw ValidationException::withMessages(['title' => 'The Section title must be 100 characters or fewer.']);
+        }
+
+        return $fields['title'];
+    }
+
+    /** @param array<string, mixed> $content */
+    private function normalizeServicesContent(array $content): array
+    {
+        if (! $this->sections->has('services')) {
+            throw ValidationException::withMessages(['content' => 'The Services Section definition is unavailable.']);
+        }
+
+        $definition = $this->sections->get('services');
+        $normalized = $definition::normalize($content);
+        if ($definition::imageReferences($normalized) !== []) {
+            throw ValidationException::withMessages(['content' => 'Only text-only Services content is supported here.']);
+        }
+
+        return $normalized;
+    }
+
+    private function assertServicesCreationPage(Page $page): void
+    {
+        $this->assertAdopted($page);
+        $metadata = $this->draftMetadata($page);
+        $composition = $this->pages->composition($metadata['template']);
+        if (! in_array('services', $composition['allowed'], true)) {
+            throw ValidationException::withMessages(['page' => 'The selected Page template does not allow Services Sections.']);
+        }
+    }
+
+    private function authorizeCopySource(Section $source, int $expectedSourceVersion): void
+    {
+        $this->authorizeCopySourceAccess($source);
+
+        $this->assertCopySource($source, $expectedSourceVersion);
+    }
+
+    private function authorizeCopySourceAccess(Section $source): void
+    {
+        $this->authorizeSection('viewAny', new Section);
+        $this->authorizeSection('view', $source);
+        $this->authorizeSection('useInPage', $source);
+        $this->authorizeSection('replicate', $source);
+    }
+
+    private function assertCopySource(Section $source, int $expectedSourceVersion): void
+    {
+        if ($source->type !== 'services' || ! $this->sections->has('services') || $source->status !== SectionStatus::ACTIVE
+            || $source->content_version === null || $source->content_version !== $expectedSourceVersion
+            || ! is_array($source->published_content)) {
+            throw new PageConflict('The published Services source changed or is unavailable. Refresh the source and review it again.');
+        }
+    }
+
+    /** @param array<string, mixed> $content */
+    private function assertSubmissionReview(string $submissionToken, int $pageId, Section $source, array $content): void
+    {
+        $row = DB::table(self::SUBMISSIONS_TABLE)->where('token', $submissionToken)->first();
+        if ($row === null || $row->operation !== 'copy-section' || (string) $row->actor_id !== (string) auth()->id()
+            || (string) $row->session_id !== (string) session()->getId() || (int) $row->page_id !== $pageId
+            || (int) $row->source_id !== (int) $source->getKey() || ! is_string($row->review_fingerprint)
+            || ! hash_equals($row->review_fingerprint, $this->sourceCopyFingerprint($source, $content))) {
+            throw new PageConflict('The published Services source changed or was not reviewed. Refresh the source and review it again.');
+        }
+    }
+
+    private function insertNewServicesSection(string $title, array $content): int
+    {
+        $now = now();
+        $slug = 'section-' . Str::uuid()->toString();
+
+        return (int) DB::table('sections')->insertGetId([
+            'component_id' => null,
+            'title' => $title,
+            'description' => '',
+            'slug' => $slug,
+            'type' => 'services',
+            'content' => json_encode([], JSON_THROW_ON_ERROR),
+            'status' => SectionStatus::ACTIVE->value,
+            'draft_content' => json_encode($content, JSON_THROW_ON_ERROR),
+            'published_content' => null,
+            'content_version' => 1,
+            'legacy_image_sources' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    private function appendDraftSection(Page $page, int $sectionId, int $expectedVersion): int
+    {
+        $order = (int) DB::table('page_section')
+            ->where('page_id', $page->getKey())
+            ->where('stage', 'draft')
+            ->max('order_column');
+        $now = now();
+        DB::table('page_section')->insert([
+            'page_id' => $page->getKey(),
+            'section_id' => $sectionId,
+            'order_column' => $order + 1,
+            'stage' => 'draft',
+            'occurrence_id' => (string) Str::uuid(),
+            'slot' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('pages')->where('id', $page->getKey())->update([
+            'page_version' => $expectedVersion + 1,
+            'updated_at' => $now,
+        ]);
+
+        return $expectedVersion + 1;
+    }
+
+    /** @return array<string, null> */
+    private function emptyMetatags(): array
+    {
+        return array_fill_keys(self::METATAG_KEYS, null);
+    }
+
+    /** @param array<string, mixed> $content */
+    private function sourceCopyFingerprint(Section $source, array $content): string
+    {
+        return hash('sha256', json_encode([
+            'section_id' => (int) $source->getKey(),
+            'type' => $source->type,
+            'status' => $source->status->value,
+            'content_version' => $source->content_version,
+            'published_content' => $content,
+            'media_ids' => $source->getMedia()->pluck('id')->map(fn (mixed $id): int => (int) $id)->values()->all(),
+            'definition' => $this->sectionDefinitionFingerprint((string) $source->type),
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    private function sectionDefinitionFingerprint(string $type): string
+    {
+        $definition = $this->sections->get($type);
+        $reflection = new \ReflectionClass($definition);
+        $file = $reflection->getFileName();
+        $source = is_string($file) && is_file($file) ? hash_file('sha256', $file) : false;
+
+        return hash('sha256', json_encode([
+            'class' => $definition,
+            'key' => $definition::key(),
+            'view' => $definition::view(),
+            'source' => $source === false ? null : $source,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function submissionFingerprint(string $operation, ?int $pageId, ?int $sourceId, array $payload): string
+    {
+        return hash('sha256', json_encode([
+            'operation' => $operation,
+            'page_id' => $pageId,
+            'source_id' => $sourceId,
+            'payload' => $payload,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    private function recordSubmissionReview(?string $token, int $pageId, int $sourceId, string $fingerprint): void
+    {
+        if ($token === null) {
+            return;
+        }
+
+        DB::transaction(function () use ($token, $pageId, $sourceId, $fingerprint): void {
+            $row = DB::table(self::SUBMISSIONS_TABLE)->where('token', $token)->lockForUpdate()->first();
+            if ($row === null || $row->operation !== 'copy-section' || (string) $row->actor_id !== (string) auth()->id()
+                || (string) $row->session_id !== (string) session()->getId() || (int) $row->page_id !== $pageId) {
+                throw ValidationException::withMessages(['submission' => 'The submission token is invalid or expired. Start the action again.']);
+            }
+            if ($row->result !== null) {
+                return;
+            }
+
+            DB::table(self::SUBMISSIONS_TABLE)->where('id', $row->id)->update([
+                'source_id' => $sourceId,
+                'review_fingerprint' => $fingerprint,
+                'updated_at' => now(),
+            ]);
+        });
+    }
+
+    /** @return array<string, mixed>|null */
+    private function lockSubmission(?string $token, string $operation, ?int $pageId, ?int $sourceId, string $fingerprint): ?array
+    {
+        if ($token === null) {
+            return null;
+        }
+
+        $row = DB::table(self::SUBMISSIONS_TABLE)->where('token', $token)->lockForUpdate()->first();
+        if ($row === null || $row->operation !== $operation || (string) $row->actor_id !== (string) auth()->id()
+            || (string) $row->session_id !== (string) session()->getId() || (int) ($row->page_id ?? 0) !== (int) ($pageId ?? 0)) {
+            throw ValidationException::withMessages(['submission' => 'The submission token is invalid or expired. Start the action again.']);
+        }
+        if ($row->source_id !== null && (int) $row->source_id !== (int) ($sourceId ?? 0)) {
+            throw ValidationException::withMessages(['submission' => 'The selected source changed. Start the action again.']);
+        }
+        if ($row->source_id === null && $sourceId !== null) {
+            DB::table(self::SUBMISSIONS_TABLE)->where('id', $row->id)->update([
+                'source_id' => $sourceId,
+                'updated_at' => now(),
+            ]);
+        }
+        if ($row->fingerprint !== null && ! hash_equals((string) $row->fingerprint, $fingerprint)) {
+            throw ValidationException::withMessages(['submission' => 'This submission was already used for different values. Start a new action.']);
+        }
+        if ($row->result !== null) {
+            $result = json_decode((string) $row->result, true);
+            if (! is_array($result)) {
+                throw new PageConflict('The previous creation result is unavailable. Start the action again.');
+            }
+
+            return $result;
+        }
+
+        DB::table(self::SUBMISSIONS_TABLE)->where('id', $row->id)->update([
+            'fingerprint' => $fingerprint,
+            'updated_at' => now(),
+        ]);
+
+        return null;
+    }
+
+    /** @param array<string, int> $result */
+    private function completeSubmission(?string $token, array $result): void
+    {
+        if ($token === null) {
+            return;
+        }
+
+        DB::table(self::SUBMISSIONS_TABLE)->where('token', $token)->update([
+            'result' => json_encode($result, JSON_THROW_ON_ERROR),
+            'updated_at' => now(),
+        ]);
     }
 
     private function authorize(string $ability, Page | Section $record): void

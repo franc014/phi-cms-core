@@ -28,10 +28,14 @@ final class SectionRenderer
             return $this->pages[$key][$section->getKey()] ?? abort(403);
         }
         abort_if($preview, 403);
-        $snapshot = $content->published($section);
-        $fresh = Section::query()->select(['id', 'type'])->findOrFail((int) $section->getKey());
+        $fresh = Section::query()->select(['id', 'type', 'published_content'])->findOrFail((int) $section->getKey());
+        $view = app(SectionRegistry::class)->get($fresh->type)::view();
+        if (! is_array($fresh->published_content)) {
+            return ['view' => $view, 'content' => [], 'source' => 'unavailable', 'unavailable' => true];
+        }
+        $snapshot = $content->published($fresh);
 
-        return ['view' => app(SectionRegistry::class)->get($fresh->type)::view(), 'content' => $snapshot];
+        return ['view' => $view, 'content' => $snapshot];
     }
 
     public function forget(): void
