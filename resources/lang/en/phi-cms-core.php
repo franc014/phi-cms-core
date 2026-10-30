@@ -130,7 +130,7 @@ return [
     'legacy_services_conversion' => 'Changing legacy content into Services is unsupported after adoption. Use the definition-backed workflow.',
     'legacy_services_generator' => 'Creating or replicating Services through legacy generators is unsupported after adoption.',
     'services_creation_workflow_required' => 'Create Services Sections through a Page draft workflow. The legacy Section generator is disabled while Page editing is enabled.',
-    'recovery_protected_section_delete' => 'Section is recovery-protected and cannot be deleted. Page usages: :usages.',
+    'recovery_protected_section_delete' => 'Section is referenced and cannot be deleted. Page usages: :usages.',
     'none' => '(none)',
     'adopted_section_placements_read_only' => 'Adopted Section placements are read-only until the Page composition workflow is installed.',
     'services_draft_editor_required' => 'Use the Services draft editor. Legacy content, metadata, status and media mutations are disabled.',

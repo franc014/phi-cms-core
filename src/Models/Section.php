@@ -86,9 +86,6 @@ class Section extends ContentModel
             if ($current === null) {
                 return null;
             }
-            if (DB::table('page_legacy_occurrences')->where('section_id', $current->getKey())->exists()) {
-                throw ValidationException::withMessages(['content' => 'This Section has retained Page recovery obligations. Keep it until an operator explicitly reconciles that recovery evidence.']);
-            }
             $usages = DB::table('page_section')
                 ->join('pages', 'pages.id', '=', 'page_section.page_id')
                 ->where('page_section.section_id', $current->id)
@@ -98,11 +95,13 @@ class Section extends ContentModel
                 ->pluck('pages.title')
                 ->unique()
                 ->implode(', ');
-            if ($current->content_version !== null || $current->draft_content !== null || $current->published_content !== null || $usages !== '') {
+            if ($usages !== '') {
                 throw ValidationException::withMessages(['content' => __('phi-cms-core::phi-cms-core.recovery_protected_section_delete', [
                     'usages' => $usages ?: __('phi-cms-core::phi-cms-core.none'),
                 ])]);
             }
+
+            DB::table('page_legacy_occurrences')->where('section_id', $current->getKey())->delete();
 
             return parent::delete();
         });

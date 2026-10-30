@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\PageStatus;
@@ -736,160 +735,23 @@ final class PageContent
         });
     }
 
-    /** @return string Recovery export path */
-    public function delete(Page $page, int $expectedVersion): string
+    public function delete(Page $page, int $expectedVersion): void
     {
         $this->ensureEditingEnabled();
         $this->authorize('delete', $page);
         $this->assertAdopted($page);
 
-        return $this->transaction(function () use ($page, $expectedVersion): string {
+        $this->transaction(function () use ($page, $expectedVersion): void {
             $fresh = $this->lockPage($page->getKey(), urls: true);
             $this->authorize('delete', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
 
-            $export = [
-                'page' => $fresh->getRawOriginal(),
-                'metatags' => $fresh->metatags?->getRawOriginal(),
-                'published_assignments' => $this->rawRows($fresh->getKey(), 'published'),
-                'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
-                'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
-            ];
-            $path = 'phi-cms/pages/' . $fresh->getKey() . '/delete-' . now()->format('YmdHis') . '-' . Str::random(8) . '.json';
-            if (! Storage::disk('local')->put($path, json_encode($export, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), 'private')) {
-                throw new PageConflict('The recovery export could not be written; the Page was not deleted.');
-            }
-
             DB::table('page_section')->where('page_id', $fresh->getKey())->delete();
+            DB::table('page_legacy_occurrences')->where('page_id', $fresh->getKey())->delete();
             DB::table('page_urls')->where('page_id', $fresh->getKey())->delete();
             DB::table('metatags')->where('metatable_type', (new Page)->getMorphClass())->where('metatable_id', $fresh->getKey())->delete();
             DB::table('pages')->where('id', $fresh->getKey())->delete();
 
-            return $path;
-        });
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function inventory(Page $page, string $template): array
-    {
-        $fresh = Page::query()->with('metatags')->findOrFail($page->getKey());
-        $this->pages->get($template);
-        if ($fresh->page_version !== null && $fresh->template !== $template) {
-            throw new PageConflict("Page {$fresh->getKey()} is already adopted with the [{$fresh->template}] template.");
-        }
-        $assignments = $this->rawRows($fresh->getKey(), 'published');
-        if ($fresh->page_version === null) {
-            $unknownPageFields = array_diff(array_keys($fresh->getRawOriginal()), ['id', 'title', 'slug', 'description', 'route', 'status', 'published_at', 'created_at', 'updated_at', 'template', 'draft_fields', 'page_version']);
-            if ($unknownPageFields !== []) {
-                throw new PageConflict('Unknown Page fields require a preservation contract: ' . implode(', ', $unknownPageFields));
-            }
-            $orders = array_column($assignments, 'order_column');
-            if (count($orders) !== count(array_unique($orders)) || in_array(null, $orders, true)) {
-                throw new PageConflict("Ambiguous relationship ordering on Page {$fresh->getKey()}; preserve and reconcile the source before adoption.");
-            }
-            $unknownColumns = array_diff(array_keys($assignments[0] ?? []), ['id', 'page_id', 'section_id', 'order_column', 'stage', 'occurrence_id', 'slot', 'created_at', 'updated_at']);
-            if ($unknownColumns !== []) {
-                throw new PageConflict('Unknown assignment fields require a preservation contract: ' . implode(', ', $unknownColumns));
-            }
-            if (DB::table('metatags')->where('metatable_type', $fresh->getMorphClass())->where('metatable_id', $fresh->getKey())->count() > 1) {
-                throw new PageConflict('Multiple Page metatag rows require explicit reconciliation before adoption.');
-            }
-        }
-        $sections = Section::query()->whereIn('id', array_values(array_unique(array_column($assignments, 'section_id'))))->orderBy('id')->get()->map(fn (Section $section): array => $section->getRawOriginal())->all();
-        $models = Section::query()->whereIn('id', array_column($assignments, 'section_id'))->get()->keyBy('id');
-        $this->validateDraftRows($fresh, $template, array_map(fn (array $row): array => $row + ['section' => $models->get($row['section_id'])], $assignments), requireRequired: false);
-        $inventory = [
-            'page' => $fresh->getRawOriginal(),
-            'metatags' => $fresh->metatags?->getRawOriginal(),
-            'assignments' => $assignments,
-            'draft_assignments' => $this->rawRows($fresh->getKey(), 'draft'),
-            'legacy_occurrences' => DB::table('page_legacy_occurrences')->where('page_id', $fresh->getKey())->orderBy('id')->get()->map(fn (object $row): array => (array) $row)->all(),
-            'urls' => PageUrl::query()->where('page_id', $fresh->getKey())->orderBy('slug')->get()->map(fn (PageUrl $url): array => $url->getRawOriginal())->all(),
-            'sections' => $sections,
-            'template' => $template,
-        ];
-
-        return $inventory + ['fingerprint' => hash('sha256', json_encode($inventory, JSON_THROW_ON_ERROR))];
-    }
-
-    /**
-     * @param  array<string, mixed>  $inventory
-     * @param  Closure(array<string, mixed>): void|null  $beforeCommit
-     */
-    public function adopt(Page $page, string $template, array $inventory, ?Closure $beforeCommit = null): void
-    {
-        $this->ensureEditingDisabled();
-        $this->pages->get($template);
-
-        $this->transaction(function () use ($page, $template, $inventory, $beforeCommit): void {
-            $fresh = $this->lockPage($page->getKey(), urls: true);
-            if ($fresh->page_version !== null) {
-                if ($fresh->template !== $template) {
-                    throw new PageConflict("Page {$fresh->getKey()} is already adopted with the [{$fresh->template}] template.");
-                }
-
-                return;
-            }
-            if ($fresh->draft_fields !== null) {
-                throw new PageConflict('This Page retains draft or rollback state and requires explicit reconciliation before adoption.');
-            }
-            $current = $this->inventory($fresh, $template);
-            if (($inventory['fingerprint'] ?? null) !== $current['fingerprint']) {
-                throw new PageConflict('The Page changed after inventory. Generate and review a fresh adoption report.');
-            }
-            $assignments = $this->rawRows($fresh->getKey(), 'published');
-            $sectionIds = array_values(array_unique(array_column($assignments, 'section_id')));
-            $metadata = array_replace($this->metadataFromPage($fresh), ['template' => $template]);
-            $this->validateMetadata($metadata, $fresh);
-            $sections = Section::query()->whereIn('id', $sectionIds)->orderBy('id')->get()->keyBy('id');
-            foreach ($assignments as $assignment) {
-                $section = $sections->get($assignment['section_id']);
-                if ($section === null) {
-                    throw new PageConflict("Section {$assignment['section_id']} disappeared during adoption.");
-                }
-                $this->assertAdoptableSource($section);
-            }
-
-            foreach ($assignments as $assignment) {
-                $occurrence = $assignment['occurrence_id'] ?? (string) Str::uuid();
-                DB::table('page_section')->where('id', $assignment['id'])->update([
-                    'stage' => 'published',
-                    'occurrence_id' => $occurrence,
-                    'updated_at' => $assignment['updated_at'],
-                ]);
-                if ($sections->get($assignment['section_id'])->type === 'about-banner') {
-                    DB::table('page_legacy_occurrences')->insert([
-                        'page_id' => $fresh->getKey(),
-                        'section_id' => $assignment['section_id'],
-                        'occurrence_id' => $occurrence,
-                    ]);
-                }
-                $exists = DB::table('page_section')->where('page_id', $fresh->getKey())->where('stage', 'draft')->where('occurrence_id', $occurrence)->exists();
-                if (! $exists) {
-                    DB::table('page_section')->insert([
-                        'page_id' => $fresh->getKey(),
-                        'section_id' => $assignment['section_id'],
-                        'order_column' => $assignment['order_column'],
-                        'stage' => 'draft',
-                        'occurrence_id' => $occurrence,
-                        'slot' => $assignment['slot'] ?? null,
-                        'created_at' => $assignment['created_at'],
-                        'updated_at' => $assignment['updated_at'],
-                    ]);
-                }
-            }
-            DB::table('pages')->where('id', $fresh->getKey())->update([
-                'template' => $template,
-                'draft_fields' => json_encode($metadata, JSON_THROW_ON_ERROR),
-                'page_version' => 1,
-            ]);
-            $this->syncUrls($fresh, $fresh->slug);
-
-            if ($beforeCommit !== null) {
-                $beforeCommit($this->inventory($fresh->fresh(), $template));
-            }
         });
     }
 
@@ -1072,16 +934,6 @@ final class PageContent
         $this->authorizeSection('view', $section);
         if ($existing === null) {
             $this->authorizeSection('useInPage', $section);
-        }
-    }
-
-    private function assertAdoptableSource(Section $section): void
-    {
-        if ($section->type === 'about-banner') {
-            return;
-        }
-        if (! $this->sections->has((string) $section->type) || $section->content_version === null || ! is_array($section->published_content)) {
-            throw new PageConflict("Section {$section->id} ({$section->type}) is not an adopted publishable source.");
         }
     }
 
@@ -1737,11 +1589,6 @@ final class PageContent
     private function ensureEditingEnabled(): void
     {
         abort_unless(config('phi-cms.editing', false), 403);
-    }
-
-    private function ensureEditingDisabled(): void
-    {
-        abort_if(config('phi-cms.editing', false), 403, 'Disable Page editing before adoption or rollback.');
     }
 
     private function checkVersion(Page $page, int $expectedVersion): void

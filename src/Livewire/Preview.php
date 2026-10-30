@@ -431,7 +431,7 @@ class Preview extends FormsComponent
         abort_unless($this->pageMode && $this->pageId !== null, 403);
 
         try {
-            $path = app(PageContent::class)->delete(Page::findOrFail($this->pageId), (int) $this->version);
+            app(PageContent::class)->delete(Page::findOrFail($this->pageId), (int) $this->version);
         } catch (PageConflict $exception) {
             $this->addError('workflow', $exception->getMessage());
 
@@ -440,7 +440,6 @@ class Preview extends FormsComponent
 
         Notification::make()
             ->title('Page deleted')
-            ->body("A private recovery export was written to [{$path}].")
             ->success()
             ->send();
         $this->redirect(PageResource::getUrl('index'));

@@ -314,23 +314,6 @@ final class SectionImages
             }
         }
 
-        foreach (Storage::disk('local')->allFiles('phi-cms/gallery') as $path) {
-            try {
-                $artifact = json_decode(Storage::disk('local')->get($path), true, flags: JSON_THROW_ON_ERROR);
-                foreach ($aliases as $alias) {
-                    if ($this->containsReference($artifact, $alias)) {
-                        $usages[] = ['section_id' => 0, 'field' => 'recovery:' . $path];
-
-                        break;
-                    }
-                }
-            } catch (Throwable) {
-                // An unrelated or incomplete recovery artifact does not grant
-                // permission to delete a media object.
-                $usages[] = ['section_id' => 0, 'field' => 'recovery:' . $path];
-            }
-        }
-
         return $usages;
     }
 

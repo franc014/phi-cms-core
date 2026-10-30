@@ -11,7 +11,7 @@ class GuardedCleanCommand extends CleanCommand
     protected function deleteConversionFilesForDeprecatedConversions(Media $media): void
     {
         if (LegacySectionGuard::conversionIsProtected($media)) {
-            $this->warn("Skipped deprecated conversions for adoption/recovery-protected Media[id={$media->id}].");
+            $this->warn("Skipped deprecated conversions for snapshot-protected Media[id={$media->id}].");
 
             return;
         }
@@ -22,7 +22,7 @@ class GuardedCleanCommand extends CleanCommand
     protected function deleteDeprecatedResponsiveImages(Media $media): void
     {
         if (LegacySectionGuard::conversionIsProtected($media)) {
-            $this->warn("Skipped deprecated responsive images for adoption/recovery-protected Media[id={$media->id}].");
+            $this->warn("Skipped deprecated responsive images for snapshot-protected Media[id={$media->id}].");
 
             return;
         }

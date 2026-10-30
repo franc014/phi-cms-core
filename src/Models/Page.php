@@ -76,7 +76,7 @@ class Page extends Model
             Section::query()->whereIn('id', $sectionIds)->orderBy('id')->lockForUpdate()->get();
             $current = static::query()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
             if (! PageMutation::allowed() && ($current->page_version !== $this->getOriginal('page_version') || ($current->draft_fields !== null && $this->getOriginal('draft_fields') === null))) {
-                throw ValidationException::withMessages(['page' => 'Page ownership changed. Reload latest; retained draft and URL recovery guards must not be bypassed.']);
+                throw ValidationException::withMessages(['page' => 'Page ownership changed. Reload latest; draft and public URL guards must not be bypassed.']);
             }
             if (! PageMutation::allowed() && $current->page_version === null && $current->draft_fields === null && $current->getRawOriginal('status') === PageStatus::PUBLISHED->value && $this->isDirty('slug')) {
                 throw ValidationException::withMessages(['page' => 'Published legacy Page slugs must be changed through the URL-preserving Page workflow.']);

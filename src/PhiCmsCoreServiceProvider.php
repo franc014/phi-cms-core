@@ -7,13 +7,10 @@ use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Blade;
-use JFA\PhiCmsCore\Commands\GalleryCommand;
 use JFA\PhiCmsCore\Commands\GalleryDeleteMediaCommand;
 use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
 use JFA\PhiCmsCore\Commands\GuardedCleanCommand;
-use JFA\PhiCmsCore\Commands\PageCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
-use JFA\PhiCmsCore\Commands\ServicesCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Http\Middleware\AuthorizeSectionTemporaryPreview;
 use JFA\PhiCmsCore\Http\Middleware\PrivatePreviewResponse;
@@ -277,11 +274,8 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
     {
         return [
             GenerateBlocksCommand::class,
-            GalleryCommand::class,
             GalleryDeleteMediaCommand::class,
-            PageCommand::class,
             SeedCommand::class,
-            ServicesCommand::class,
         ];
     }
 

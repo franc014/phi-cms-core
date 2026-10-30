@@ -2,7 +2,6 @@
 
 namespace JFA\PhiCmsCore\Sections;
 
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -28,7 +27,7 @@ final class SectionContent
         try {
             $fresh = Section::query()->select(['id', 'type', 'content_version', 'published_content', 'legacy_image_sources'])->findOrFail((int) $section->getKey());
 
-            return $this->normalizeSnapshot($fresh, $fresh->published_content, allowRecovery: true);
+            return $this->normalizeSnapshot($fresh, $fresh->published_content);
         } catch (Throwable $exception) {
             Log::error('Unable to render published Section.', ['section_id' => $section->getKey(), 'exception_type' => $exception::class]);
             abort(503, 'Content temporarily unavailable.');
@@ -51,12 +50,7 @@ final class SectionContent
             $relationship->where('sections.status', SectionStatus::ACTIVE);
         }
         $sections = $relationship
-            ->where(function (Builder $query) use ($preview): void {
-                $query->whereNotNull('content_version');
-                if (! $preview) {
-                    $query->orWhere(fn (Builder $recovery): Builder => $recovery->where('type', 'gallery')->whereNotNull('legacy_image_sources')->whereNotNull('published_content'));
-                }
-            })->select($columns)->orderByPivot('order_column')->get();
+            ->whereNotNull('content_version')->select($columns)->orderByPivot('order_column')->get();
         $actor = $preview ? auth()->user()?->fresh() : null;
         $rendered = [];
         foreach ($sections as $section) {
@@ -86,7 +80,7 @@ final class SectionContent
 
             $rendered[$section->id] = [
                 'view' => $view,
-                'content' => $this->normalizeSnapshot($section, $snapshot, allowRecovery: ! $preview),
+                'content' => $this->normalizeSnapshot($section, $snapshot),
                 'source' => $source,
                 'unavailable' => false,
             ];
@@ -229,9 +223,9 @@ final class SectionContent
     }
 
     /** @return array<string, mixed> */
-    private function normalizeSnapshot(Section $section, mixed $content, bool $allowRecovery = false): array
+    private function normalizeSnapshot(Section $section, mixed $content): array
     {
-        if (($section->content_version === null && ! ($allowRecovery && $section->type === 'gallery' && $section->legacy_image_sources !== null)) || ! is_array($content)) {
+        if ($section->content_version === null || ! is_array($content)) {
             throw ValidationException::withMessages(['content' => "Section {$section->id} ({$section->type}) has no valid adopted snapshot."]);
         }
 
