@@ -4,15 +4,26 @@
     x-on:phi-section-editor-focus="$nextTick(() => { $dispatch('open-section', { id: 'preview-section-editor' }); $nextTick(() => { const editor = $el.querySelector('[x-ref=editorForm]'); editor?.scrollIntoView({ behavior: 'instant', block: 'start' }); editor?.querySelector('input:not([disabled]):not([type=hidden]), textarea:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true }); }); })"
     x-on:phi-section-editor-scroll="$nextTick(() => { $dispatch('open-section', { id: 'preview-section-editor' }); $nextTick(() => $el.querySelector('[x-ref=editorForm]')?.scrollIntoView({ behavior: 'instant', block: 'start' })); })">
     <header>
-        <h1 class="text-2xl font-semibold">{{ $pageMode ? 'Page draft preview' : __('phi-cms-core::workflow.preview') }}</h1>
-        <p>{{ $pageMode ? 'This private canvas uses the saved Page draft. Public output remains unchanged until the Page is published.' : __('phi-cms-core::workflow.preview_help') }}</p>
+        <h1 class="text-2xl font-semibold">{{ $pageMode ? __('phi-cms-core::workflow.page_draft_preview') : __('phi-cms-core::workflow.preview') }}</h1>
+        <p>{{ $pageMode ? __('phi-cms-core::workflow.page_draft_preview_help') : __('phi-cms-core::workflow.preview_help') }}</p>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+            @if ($page)
+                <x-filament::badge data-status-badge="page" :color="$page->status->getColor()">{{ $page->status->getLabel() }}</x-filament::badge>
+            @endif
+            @if ($selectedSection)
+                <x-filament::badge data-status-badge="section" :color="$selectedSection->status->getColor()">{{ $selectedSection->status->getLabel() }}</x-filament::badge>
+                <x-filament::badge data-status-badge="section-publication" color="gray">
+                    {{ __('phi-cms-core::workflow.'.$selectedSection->publicationState()) }}
+                </x-filament::badge>
+            @endif
+        </div>
     </header>
     <div class="grid gap-6 xl:grid-cols-3">
         @if ($page)
             <div class="min-w-0 xl:col-span-2" aria-label="{{ __('phi-cms-core::workflow.canvas') }}">
                 @if ($pageMode && count($pageRows) === 0)
                     <div role="status" class="mb-6 rounded border border-dashed border-gray-400 bg-white p-6 text-sm text-gray-700 dark:bg-gray-900 dark:text-gray-300">
-                        This Page has no Sections yet. Add a shared, new, or copied Services Section from the Draft sections workspace. A published Services Section is required before this Page can be published.
+                        {{ __('phi-cms-core::workflow.empty_sections_title') }} {{ __('phi-cms-core::workflow.empty_sections_help') }}
                     </div>
                 @endif
                 @include($pageTemplateView, ['page' => $page, 'sections' => $sections, 'preview' => true])
@@ -22,9 +33,9 @@
             @error('workflow') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
             @error('data') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
             @if ($pageMode)
-                <x-filament::section collapsible id="preview-page-fields" aria-label="Page draft editor">
-                    <x-slot name="heading">Page fields</x-slot>
-                    <x-slot name="description">Save Page draft and Publish Page are independent from Section publication.</x-slot>
+                <x-filament::section collapsible id="preview-page-fields" :aria-label="__('phi-cms-core::workflow.page_fields')">
+                    <x-slot name="heading">{{ __('phi-cms-core::workflow.page_fields') }}</x-slot>
+                    <x-slot name="description">{{ __('phi-cms-core::workflow.page_fields_help') }}</x-slot>
                     <div class="space-y-4" x-ref="pageEditor">
                         @error('fields') <p role="alert" class="text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                         <label class="block text-sm font-medium">Title
@@ -68,8 +79,8 @@
                 </x-filament::section>
 
                 <x-filament::section collapsible id="preview-draft-sections" aria-label="Draft sections">
-                    <x-slot name="heading">Draft sections</x-slot>
-                    <x-slot name="description">Reordering and additions are saved as Page draft assignments. Repeated Section identities remain separate occurrences.</x-slot>
+                    <x-slot name="heading">{{ __('phi-cms-core::workflow.draft_sections') }}</x-slot>
+                    <x-slot name="description">{{ __('phi-cms-core::workflow.draft_sections_help') }}</x-slot>
                     <div class="space-y-4">
                         @foreach ($pageRows as $index => $row)
                             @php($rowSection = collect($sections)->first(fn ($section): bool => (int) $section->getKey() === (int) $row['section_id']))

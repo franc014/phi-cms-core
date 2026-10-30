@@ -9,6 +9,7 @@ use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ManageRelatedRecords;
 use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Utilities\Get;
@@ -44,7 +45,7 @@ class ManagePageSections extends ManageRelatedRecords
     #[Locked]
     public ?int $pageVersion = null;
 
-    public function mount(int|string $record): void
+    public function mount(int | string $record): void
     {
         parent::mount($record);
         $this->pageVersion = $this->getOwnerRecord()->page_version;
@@ -74,23 +75,23 @@ class ManagePageSections extends ManageRelatedRecords
     {
         if ($this->getOwnerRecord()->page_version !== null) {
             return $table
-                ->heading('Draft sections')
+                ->heading(__('phi-cms-core::workflow.draft_sections'))
                 ->columns([
-                    TextColumn::make('section.title')->label('Section'),
-                    TextColumn::make('section.status')->label('Availability'),
-                    TextColumn::make('publication')->label('Publication')
-                        ->state(fn (PageSection $record): string => $record->section->content_version !== null && $record->section->published_content === null
-                            ? 'Unpublished Section'
-                            : 'Published Section'),
+                    TextColumn::make('section.title')->label(__('phi-cms-core::workflow.section')),
+                    TextColumn::make('section.status')->label(__('phi-cms-core::workflow.availability'))
+                        ->badge(),
+                    TextColumn::make('publication')->label(__('phi-cms-core::workflow.publication'))
+                        ->state(fn (PageSection $record): string => __('phi-cms-core::workflow.' . $record->section->publicationState()))
+                        ->badge(),
                 ])
                 ->reorderable('order_column')
                 ->authorizeReorder(fn (): bool => static::canAccess(['record' => $this->getOwnerRecord()]))
                 ->headerActions([
                     Action::make('createAndAddSection')
-                        ->label('Create and add Services')
+                        ->label(__('phi-cms-core::workflow.create_and_add_services'))
                         ->authorize(fn (): bool => $this->canCreateSection())
                         ->schema([
-                            TextInput::make('title')->label('Library title')->required()->maxLength(100),
+                            TextInput::make('title')->label(__('phi-cms-core::workflow.library_title'))->required()->maxLength(100),
                             ...$this->servicesFields(),
                             Hidden::make('_submission_token')
                                 ->default(fn (): string => app(PageContent::class)->issueSubmissionToken('create-section', (int) $this->getOwnerRecord()->getKey())),
@@ -112,13 +113,14 @@ class ManagePageSections extends ManageRelatedRecords
                             }
                             $this->pageVersion = $result['page_version'];
                             $this->resetTable();
-                        }),
+                        })
+                        ->successNotificationTitle(__('phi-cms-core::workflow.notifications.section_created')),
                     Action::make('copyAndAddSection')
-                        ->label('Copy published Services')
+                        ->label(__('phi-cms-core::workflow.copy_published_services'))
                         ->authorize(fn (): bool => $this->canCreateSection())
                         ->schema([
                             Select::make('source_section_id')
-                                ->label('Published Services source')
+                                ->label(__('phi-cms-core::workflow.published_services_source'))
                                 ->options(fn (): array => collect(app(PageContent::class)->copyableSections($this->getOwnerRecord()))->pluck('title', 'id')->all())
                                 ->required()
                                 ->searchable()
@@ -135,22 +137,22 @@ class ManagePageSections extends ManageRelatedRecords
                                     $source = Section::query()->find((int) $state);
                                     if ($source !== null && $get('_title_edited') !== true) {
                                         $copySuffix = ' — Copy';
-                                        $set('title', mb_substr($source->title, 0, 100 - mb_strlen($copySuffix)).$copySuffix);
+                                        $set('title', mb_substr($source->title, 0, 100 - mb_strlen($copySuffix)) . $copySuffix);
                                     }
                                     $set('_source_version', $preview['version']);
                                 }),
                             TextInput::make('title')
-                                ->label('Library title')
+                                ->label(__('phi-cms-core::workflow.library_title'))
                                 ->required()
                                 ->maxLength(100)
                                 ->afterStateUpdated(function (Set $set): void {
                                     $set('_title_edited', true);
                                 }),
                             Placeholder::make('published_snapshot')
-                                ->label('Published content (read-only)')
+                                ->label(__('phi-cms-core::workflow.published_snapshot'))
                                 ->content(function (Get $get): string {
                                     if (! is_numeric($get('source_section_id'))) {
-                                        return 'Choose a published Services source to review its public text.';
+                                        return __('phi-cms-core::workflow.choose_published_source');
                                     }
 
                                     try {
@@ -160,9 +162,9 @@ class ManagePageSections extends ManageRelatedRecords
                                             is_string($get('_submission_token')) ? $get('_submission_token') : null,
                                         );
 
-                                        return json_encode($preview['content'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: 'Published content unavailable.';
-                                    } catch (ValidationException|PageConflict) {
-                                        return 'Published content is no longer available. Refresh the source list.';
+                                        return json_encode($preview['content'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: __('phi-cms-core::workflow.published_content_empty');
+                                    } catch (ValidationException | PageConflict) {
+                                        return __('phi-cms-core::workflow.published_content_unavailable');
                                     }
                                 }),
                             Hidden::make('_title_edited')->default(false)->dehydrated(false),
@@ -193,23 +195,26 @@ class ManagePageSections extends ManageRelatedRecords
                             }
                             $this->pageVersion = $result['page_version'];
                             $this->resetTable();
-                        }),
-                    Action::make('addSection')->label('Add existing Section')
-                        ->schema([Select::make('section_id')->label('Section')->required()
+                        })
+                        ->successNotificationTitle(__('phi-cms-core::workflow.notifications.section_copied')),
+                    Action::make('addSection')->label(__('phi-cms-core::workflow.add_existing_section'))
+                        ->schema([Select::make('section_id')->label(__('phi-cms-core::workflow.section'))->required()
                             ->options(fn (): array => collect(app(PageContent::class)->selectableSections($this->getOwnerRecord()))->pluck('title', 'id')->all())])
                         ->action(function (array $data): void {
                             $rows = $this->draftRows();
                             $rows[] = ['pivot_id' => null, 'section_id' => (int) $data['section_id'], 'slot' => null];
                             $this->saveRows($rows);
-                        }),
+                        })
+                        ->successNotificationTitle(__('phi-cms-core::workflow.notifications.section_assigned')),
                 ])
                 ->recordActions([
-                    Action::make('removeSection')->label('Remove assignment')
+                    Action::make('removeSection')->label(__('phi-cms-core::workflow.remove_assignment'))
                         ->action(function (PageSection $record): void {
                             $rows = array_values(array_filter($this->draftRows(), fn (array $row): bool => $row['pivot_id'] !== $record->getKey()));
                             $this->saveRows($rows);
-                        }),
-                    Action::make('editSection')->label('Edit Section content')
+                        })
+                        ->successNotificationTitle(__('phi-cms-core::workflow.notifications.section_removed')),
+                    Action::make('editSection')->label(__('phi-cms-core::workflow.edit_section_content'))
                         ->visible(fn (PageSection $record): bool => $record->section->content_version !== null && (auth()->user()?->fresh()?->can('update', $record->section) ?? false))
                         ->url(fn (PageSection $record): string => SectionResource::getUrl('draft', ['record' => $record->section_id])),
                 ])->toolbarActions([]);
@@ -222,7 +227,7 @@ class ManagePageSections extends ManageRelatedRecords
                 fn (Action $action, bool $isReordering) => $action
                     ->button()
                     ->icon($isReordering ? Heroicon::OutlinedXCircle : Heroicon::OutlinedArrowsUpDown)
-                    ->label($isReordering ? 'Close reordering' : 'Reorder sections'),
+                    ->label($isReordering ? __('phi-cms-core::workflow.close_reordering') : __('phi-cms-core::workflow.reorder_sections')),
             )
             ->modifyQueryUsing(function (Builder $query) {
                 return $query->orderBy('order_column');
@@ -254,7 +259,7 @@ class ManagePageSections extends ManageRelatedRecords
             ]);
     }
 
-    public function reorderTable(array $order, int|string|null $draggedRecordKey = null): void
+    public function reorderTable(array $order, int | string | null $draggedRecordKey = null): void
     {
         if ($this->getOwnerRecord()->fresh()->page_version !== null) {
             $rows = collect($this->draftRows())->keyBy('pivot_id');
@@ -263,6 +268,10 @@ class ManagePageSections extends ManageRelatedRecords
                 throw ValidationException::withMessages(['sections' => 'Reorder must contain every current draft assignment exactly once. Reload latest.']);
             }
             $this->saveRows(array_map(fn (int $id): array => $rows[$id], $ids));
+            Notification::make()
+                ->title(__('phi-cms-core::workflow.notifications.sections_reordered'))
+                ->success()
+                ->send();
 
             return;
         }
@@ -278,7 +287,7 @@ class ManagePageSections extends ManageRelatedRecords
         });
     }
 
-    public function getRelationship(): Relation|Builder
+    public function getRelationship(): Relation | Builder
     {
         $page = $this->getOwnerRecord();
 

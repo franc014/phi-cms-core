@@ -32,6 +32,16 @@ class Section extends ContentModel
 
     protected $hidden = ['draft_content', 'published_content'];
 
+    /** @return 'current_live'|'published_content'|'unpublished_section' */
+    public function publicationState(): string
+    {
+        return match (true) {
+            $this->content_version === null => 'current_live',
+            is_array($this->published_content) => 'published_content',
+            default => 'unpublished_section',
+        };
+    }
+
     public function save(array $options = []): bool
     {
         return DB::transaction(function () use ($options): bool {

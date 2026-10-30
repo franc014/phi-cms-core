@@ -55,6 +55,7 @@ class PagesTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->identifier('pages-with-statuses')
             ->columns([
                 TextColumn::make('title')
                     ->label(__('phi-cms-core::phi-cms-core.title'))
@@ -65,6 +66,10 @@ class PagesTable
                     ->searchable(),
                 TextColumn::make('status')
                     ->label(__('phi-cms-core::phi-cms-core.status'))
+                    ->badge()
+                    ->searchable(),
+                TextColumn::make('sections.status')
+                    ->label(__('phi-cms-core::workflow.section_status'))
                     ->badge()
                     ->searchable(),
                 TextColumn::make('sections.title')

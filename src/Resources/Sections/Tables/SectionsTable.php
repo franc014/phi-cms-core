@@ -48,6 +48,7 @@ class SectionsTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->identifier('sections-with-publication')
             ->columns([
                 TextColumn::make('title')
                     ->label(__('phi-cms-core::phi-cms-core.title'))
@@ -60,6 +61,10 @@ class SectionsTable
                     ->label(__('phi-cms-core::phi-cms-core.status'))
                     ->badge()
                     ->searchable(),
+                TextColumn::make('publication')
+                    ->label(__('phi-cms-core::workflow.publication'))
+                    ->state(fn (Section $record): string => __('phi-cms-core::workflow.' . $record->publicationState()))
+                    ->badge(),
                 TextColumn::make('created_at')
                     ->label(__('phi-cms-core::phi-cms-core.created_at'))
                     ->dateTime()

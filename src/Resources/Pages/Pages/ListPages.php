@@ -37,7 +37,7 @@ class ListPages extends ListRecords
                         $submissionToken,
                     );
                 })
-                ->successNotificationTitle('Draft Page created')
+                ->successNotificationTitle(__('phi-cms-core::workflow.notifications.page_created'))
                 ->successRedirectUrl(fn (Page $record): string => route('cms.page.preview', $record)),
         ];
     }
