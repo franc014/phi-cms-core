@@ -9,6 +9,7 @@ return [
     'editor' => 'Section editor',
     'page_fields' => 'Page fields',
     'page_fields_help' => 'Save the Page draft and publish the Page independently from Section publication.',
+    'back_to_dashboard' => 'Back to dashboard',
     'draft_sections' => 'Draft sections',
     'draft_sections_help' => 'Reordering and additions are saved as Page draft assignments. Repeated Section identities remain separate occurrences.',
     'empty_sections_title' => 'This Page has no Sections yet.',

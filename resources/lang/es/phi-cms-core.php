@@ -76,6 +76,7 @@ return [
 
     // Actions
     'manage_sections' => 'Gestionar Secciones',
+    'preview_page' => 'Vista previa de la página',
     'activate' => 'Activar',
     'deactivate' => 'Desactivar',
     'publish' => 'Publicar',

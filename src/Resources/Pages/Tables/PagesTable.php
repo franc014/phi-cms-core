@@ -39,8 +39,17 @@ class PagesTable
                 ->hidden(function (Page $record): bool {
                     return $record->draft_fields !== null || $record->page_version !== null || $record->status->value === 'draft';
                 }),
+            Action::make('preview')
+                ->label(__('phi-cms-core::phi-cms-core.preview_page'))
+                ->authorize('preview')
+                ->icon(Heroicon::OutlinedEye)
+                ->color('info')
+                ->visible(fn (Page $record): bool => $record->page_version !== null)
+                ->url(fn (Page $record): string => route('cms.page.preview', $record)),
             Action::make('manageSections')
-                ->label(fn (Page $record): string => $record->page_version !== null ? 'Draft sections' : __('phi-cms-core::phi-cms-core.manage_sections'))
+                ->label(fn (Page $record): string => $record->page_version !== null
+                    ? __('phi-cms-core::workflow.draft_sections')
+                    : __('phi-cms-core::phi-cms-core.manage_sections'))
                 ->icon(Heroicon::OutlinedRectangleGroup)
                 ->color('accent')
                 ->visible(function (Page $record): bool {

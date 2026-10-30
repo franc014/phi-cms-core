@@ -7,6 +7,15 @@
         <h1 class="text-2xl font-semibold">{{ $pageMode ? __('phi-cms-core::workflow.page_draft_preview') : __('phi-cms-core::workflow.preview') }}</h1>
         <p>{{ $pageMode ? __('phi-cms-core::workflow.page_draft_preview_help') : __('phi-cms-core::workflow.preview_help') }}</p>
         <div class="mt-3 flex flex-wrap items-center gap-2">
+            @if ($pageMode)
+                <x-filament::button
+                    tag="a"
+                    href="{{ \JFA\PhiCmsCore\Resources\Pages\PageResource::getUrl('index') }}"
+                    color="gray"
+                >
+                    {{ __('phi-cms-core::workflow.back_to_dashboard') }}
+                </x-filament::button>
+            @endif
             @if ($page)
                 <x-filament::badge data-status-badge="page" :color="$page->status->getColor()">{{ $page->status->getLabel() }}</x-filament::badge>
             @endif

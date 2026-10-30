@@ -9,6 +9,7 @@ return [
     'editor' => 'Editor de Sección',
     'page_fields' => 'Campos de la Página',
     'page_fields_help' => 'Guarde el borrador de la Página y publique la Página de forma independiente de la publicación de Secciones.',
+    'back_to_dashboard' => 'Volver al panel',
     'draft_sections' => 'Secciones del borrador',
     'draft_sections_help' => 'El orden y las adiciones se guardan como asignaciones del borrador de Página. Las identidades de Sección repetidas conservan sus ocurrencias independientes.',
     'empty_sections_title' => 'Esta Página todavía no tiene Secciones.',
