@@ -51,6 +51,11 @@ class ManagePageSections extends ManageRelatedRecords
         $this->pageVersion = $this->getOwnerRecord()->page_version;
     }
 
+    public static function getRelationshipTitle(): string
+    {
+        return SectionResource::getPluralModelLabel();
+    }
+
     /** @param array<string, mixed> $parameters */
     public static function canAccess(array $parameters = []): bool
     {
