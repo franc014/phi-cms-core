@@ -104,12 +104,13 @@
                                 @endif
                             </div>
                         @endforeach
-                        @if ($canComposePage && count($selectableSections) > 0)
-                            <label class="block text-sm font-medium">Add existing adopted Section
+                        @if ($canComposePage && count($selectableSectionChoices) > 0)
+                            <p class="text-sm">{{ __('phi-cms-core::workflow.shared_section_help') }}</p>
+                            <label class="block text-sm font-medium">{{ __('phi-cms-core::workflow.add_existing_section') }}
                                 <select wire:change="addPageSection($event.target.value)" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white">
                                     <option value="">Choose a Section</option>
-                                    @foreach ($selectableSections as $selectableSection)
-                                        <option value="{{ $selectableSection->id }}">{{ $selectableSection->title }} — {{ $selectableSection->type }}</option>
+                                    @foreach ($selectableSectionChoices as $choice)
+                                        <option value="{{ $choice['section']->id }}">{{ $choice['label'] }}</option>
                                     @endforeach
                                 </select>
                             </label>

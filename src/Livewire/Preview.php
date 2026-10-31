@@ -525,7 +525,7 @@ class Preview extends FormsComponent
                 'canComposePage' => auth()->user()?->fresh()?->can('compose', $page) ?? false,
                 'canPublishPage' => auth()->user()?->fresh()?->can('publish', $page) ?? false,
                 'canDeletePage' => auth()->user()?->fresh()?->can('delete', $page) ?? false,
-                'selectableSections' => app(PageContent::class)->selectableSections($page),
+                'selectableSectionChoices' => app(PageContent::class)->selectableSectionChoices($page),
                 'restorableLegacySections' => app(PageContent::class)->restorableLegacySections($page),
             ]);
         }

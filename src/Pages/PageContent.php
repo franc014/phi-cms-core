@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\PageStatus;
@@ -402,7 +401,7 @@ final class PageContent
     }
 
     /**
-     * @return list<array{section: Section, usage_count: int}>
+     * @return list<array{section: Section, usage_count: int, label: string}>
      */
     public function selectableSectionChoices(Page $page): array
     {
@@ -414,29 +413,59 @@ final class PageContent
         }
 
         $gate = Gate::forUser($actor);
-        $usageCounts = PageSection::query()
+        $usageCounts = [];
+        $usageKeys = [];
+
+        $assignments = PageSection::query()
             ->whereIn('section_id', array_map(
                 static fn (Section $section): int => (int) $section->getKey(),
                 $sections,
             ))
             ->with('page')
-            ->get()
-            ->filter(function (PageSection $assignment) use ($gate): bool {
-                $page = $assignment->page;
+            ->get();
 
-                return $page instanceof Page
-                    && ($gate->allows('view', $page) || $gate->allows('preview', $page));
-            })
-            ->groupBy('section_id')
-            ->map(static fn (Collection $assignments): int => $assignments->count());
+        foreach ($assignments as $assignment) {
+            $page = $assignment->page;
+            if (! $page instanceof Page) {
+                continue;
+            }
 
-        return array_map(
-            static fn (Section $section): array => [
+            $canSeeUsage = $assignment->stage === 'draft'
+                ? $gate->allows('preview', $page)
+                : $gate->allows('view', $page) || $gate->allows('preview', $page);
+            if (! $canSeeUsage) {
+                continue;
+            }
+
+            $occurrence = $assignment->occurrence_id;
+            $usageKey = (string) $page->getKey() . '|' . ($occurrence ?? $assignment->stage . '|' . $assignment->getKey());
+            if (isset($usageKeys[$assignment->section_id][$usageKey])) {
+                continue;
+            }
+
+            $usageKeys[$assignment->section_id][$usageKey] = true;
+            $usageCounts[$assignment->section_id] = ($usageCounts[$assignment->section_id] ?? 0) + 1;
+        }
+
+        return array_map(function (Section $section) use ($usageCounts): array {
+            $usageCount = $usageCounts[$section->getKey()] ?? 0;
+
+            return [
                 'section' => $section,
-                'usage_count' => (int) $usageCounts->get($section->getKey(), 0),
-            ],
-            $sections,
-        );
+                'usage_count' => $usageCount,
+                'label' => $this->selectableSectionLabel($section, $usageCount),
+            ];
+        }, $sections);
+    }
+
+    private function selectableSectionLabel(Section $section, int $usageCount): string
+    {
+        return __('phi-cms-core::workflow.shared_section_option', [
+            'title' => $section->title,
+            'availability' => $section->status->getLabel(),
+            'publication' => __('phi-cms-core::workflow.' . $section->publicationState()),
+            'usages' => trans_choice('phi-cms-core::workflow.authorized_page_usages', $usageCount, ['count' => $usageCount]),
+        ]);
     }
 
     /** @return array<int, Section> */

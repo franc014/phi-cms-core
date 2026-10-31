@@ -210,18 +210,11 @@ class ManagePageSections extends ManageRelatedRecords
                             ->options(fn (): array => collect(app(PageContent::class)->selectableSectionChoices($this->getOwnerRecord()))
                                 ->mapWithKeys(function (array $choice): array {
                                     $section = $choice['section'];
-                                    if (! $section instanceof Section) {
+                                    if (! $section instanceof Section || ! is_string($choice['label'] ?? null)) {
                                         return [];
                                     }
 
-                                    $usageCount = (int) $choice['usage_count'];
-
-                                    return [$section->getKey() => __('phi-cms-core::workflow.shared_section_option', [
-                                        'title' => $section->title,
-                                        'availability' => $section->status->getLabel(),
-                                        'publication' => __('phi-cms-core::workflow.' . $section->publicationState()),
-                                        'usages' => trans_choice('phi-cms-core::workflow.authorized_page_usages', $usageCount, ['count' => $usageCount]),
-                                    ])];
+                                    return [$section->getKey() => $choice['label']];
                                 })
                                 ->all())])
                         ->action(function (array $data): void {
