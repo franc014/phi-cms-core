@@ -3,10 +3,12 @@
 namespace JFA\PhiCmsCore\Pages;
 
 use Closure;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\PageStatus;
@@ -397,6 +399,44 @@ final class PageContent
                 && Gate::forUser($actor)->allows('useInPage', $section))
             ->values()
             ->all();
+    }
+
+    /**
+     * @return list<array{section: Section, usage_count: int}>
+     */
+    public function selectableSectionChoices(Page $page): array
+    {
+        $sections = $this->selectableSections($page);
+        $actor = auth()->user()?->fresh();
+
+        if ($sections === [] || ! $actor instanceof Authenticatable) {
+            return [];
+        }
+
+        $gate = Gate::forUser($actor);
+        $usageCounts = PageSection::query()
+            ->whereIn('section_id', array_map(
+                static fn (Section $section): int => (int) $section->getKey(),
+                $sections,
+            ))
+            ->with('page')
+            ->get()
+            ->filter(function (PageSection $assignment) use ($gate): bool {
+                $page = $assignment->page;
+
+                return $page instanceof Page
+                    && ($gate->allows('view', $page) || $gate->allows('preview', $page));
+            })
+            ->groupBy('section_id')
+            ->map(static fn (Collection $assignments): int => $assignments->count());
+
+        return array_map(
+            static fn (Section $section): array => [
+                'section' => $section,
+                'usage_count' => (int) $usageCounts->get($section->getKey(), 0),
+            ],
+            $sections,
+        );
     }
 
     /** @return array<int, Section> */

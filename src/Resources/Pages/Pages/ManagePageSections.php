@@ -203,8 +203,27 @@ class ManagePageSections extends ManageRelatedRecords
                         })
                         ->successNotificationTitle(__('phi-cms-core::workflow.notifications.section_copied')),
                     Action::make('addSection')->label(__('phi-cms-core::workflow.add_existing_section'))
-                        ->schema([Select::make('section_id')->label(__('phi-cms-core::workflow.section'))->required()
-                            ->options(fn (): array => collect(app(PageContent::class)->selectableSections($this->getOwnerRecord()))->pluck('title', 'id')->all())])
+                        ->schema([Select::make('section_id')->label(__('phi-cms-core::workflow.section'))
+                            ->helperText(__('phi-cms-core::workflow.shared_section_help'))
+                            ->required()
+                            ->searchable()
+                            ->options(fn (): array => collect(app(PageContent::class)->selectableSectionChoices($this->getOwnerRecord()))
+                                ->mapWithKeys(function (array $choice): array {
+                                    $section = $choice['section'];
+                                    if (! $section instanceof Section) {
+                                        return [];
+                                    }
+
+                                    $usageCount = (int) $choice['usage_count'];
+
+                                    return [$section->getKey() => __('phi-cms-core::workflow.shared_section_option', [
+                                        'title' => $section->title,
+                                        'availability' => $section->status->getLabel(),
+                                        'publication' => __('phi-cms-core::workflow.' . $section->publicationState()),
+                                        'usages' => trans_choice('phi-cms-core::workflow.authorized_page_usages', $usageCount, ['count' => $usageCount]),
+                                    ])];
+                                })
+                                ->all())])
                         ->action(function (array $data): void {
                             $rows = $this->draftRows();
                             $rows[] = ['pivot_id' => null, 'section_id' => (int) $data['section_id'], 'slot' => null];
