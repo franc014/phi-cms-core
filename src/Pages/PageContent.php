@@ -1429,6 +1429,9 @@ final class PageContent
         $this->assertAdopted($page);
         $metadata = $this->draftMetadata($page);
         $composition = $this->pages->composition($metadata['template']);
+        if ($composition['mode'] !== 'ordered') {
+            throw ValidationException::withMessages(['page' => 'Creating or copying Services Sections requires an ordered Page template.']);
+        }
         if (! in_array('services', $composition['allowed'], true)) {
             throw ValidationException::withMessages(['page' => 'The selected Page template does not allow Services Sections.']);
         }

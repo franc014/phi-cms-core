@@ -26,6 +26,7 @@ return [
     'published_section' => 'Published Section',
     'create_and_add_services' => 'Create and add Services',
     'copy_published_services' => 'Copy published Services',
+    'independent_services_help' => 'New and copy create independent unpublished Sections. Copy uses only reviewed published text, never source drafts. These choices open the Draft sections manager; save pending workspace changes before leaving.',
     'add_existing_section' => 'Add existing Section',
     'remove_assignment' => 'Remove assignment',
     'edit_section_content' => 'Edit Section content',

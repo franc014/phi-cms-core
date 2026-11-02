@@ -17,6 +17,7 @@ use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Pages\PageConflict;
 use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
+use JFA\PhiCmsCore\Resources\Pages\Pages\ManagePageSections;
 use JFA\PhiCmsCore\Sections\SectionConflict;
 use JFA\PhiCmsCore\Sections\SectionContent;
 use JFA\PhiCmsCore\Sections\SectionImageContext;
@@ -509,8 +510,17 @@ class Preview extends FormsComponent
             $page = app(PageContent::class)->previewPage(Page::findOrFail($this->pageId));
             $sections = collect(app(PageContent::class)->previewSections($page));
             $selectedSection = $this->sectionId === null ? null : $this->selectedSection();
+            $manageSectionsUrl = ManagePageSections::canAccess(['record' => $page])
+                ? PageResource::getUrl('manageSections', ['record' => $page])
+                : null;
+            $canCreateServices = $manageSectionsUrl !== null && ManagePageSections::canCreateServicesSection($page);
 
             return view('phi-cms-core::livewire.preview', [
+                'manageSectionsUrl' => $manageSectionsUrl,
+                'createSectionUrl' => $canCreateServices
+                    ? PageResource::getUrl('manageSections', ['record' => $page, 'tableAction' => 'createAndAddSection']) : null,
+                'copySectionUrl' => $canCreateServices && app(PageContent::class)->copyableSections($page) !== []
+                    ? PageResource::getUrl('manageSections', ['record' => $page, 'tableAction' => 'copyAndAddSection']) : null,
                 'page' => $page,
                 'sections' => $sections,
                 'preview' => true,

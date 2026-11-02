@@ -26,6 +26,7 @@ return [
     'published_section' => 'Sección publicada',
     'create_and_add_services' => 'Crear y añadir Services',
     'copy_published_services' => 'Copiar Services publicado',
+    'independent_services_help' => 'Crear y copiar generan Secciones independientes sin publicar. Copiar usa solo el texto publicado revisado, nunca los borradores de origen. Estas opciones abren el gestor de Secciones del borrador; guarda los cambios pendientes antes de salir.',
     'add_existing_section' => 'Añadir Sección existente',
     'remove_assignment' => 'Quitar asignación',
     'edit_section_content' => 'Editar contenido de Sección',

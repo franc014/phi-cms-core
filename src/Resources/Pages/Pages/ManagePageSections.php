@@ -28,6 +28,7 @@ use JFA\PhiCmsCore\Models\PageSection;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Pages\PageConflict;
 use JFA\PhiCmsCore\Pages\PageContent;
+use JFA\PhiCmsCore\Pages\PageRegistry;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Resources\Sections\SectionResource;
 use JFA\PhiCmsCore\Sections\LegacySectionGuard;
@@ -344,10 +345,21 @@ class ManagePageSections extends ManageRelatedRecords
 
     private function canCreateSection(): bool
     {
-        $page = $this->getOwnerRecord()->fresh();
+        return static::canCreateServicesSection($this->getOwnerRecord());
+    }
+
+    public static function canCreateServicesSection(Page $page): bool
+    {
+        $page = $page->fresh();
         $actor = auth()->user()?->fresh();
+        if ($page?->page_version === null || ! is_array($page->draft_fields)) {
+            return false;
+        }
+        $composition = app(PageRegistry::class)->composition($page->draft_fields['template']);
 
         return config('phi-cms.editing', false)
+            && $composition['mode'] === 'ordered'
+            && in_array('services', $composition['allowed'], true)
             && $actor !== null
             && $actor->can('preview', $page)
             && $actor->can('compose', $page)

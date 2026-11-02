@@ -104,6 +104,7 @@
                                 @endif
                             </div>
                         @endforeach
+                        @include('phi-cms-core::livewire.section-creation-links')
                         @if ($canComposePage && count($selectableSectionChoices) > 0)
                             <p class="text-sm">{{ __('phi-cms-core::workflow.shared_section_help') }}</p>
                             <label class="block text-sm font-medium">{{ __('phi-cms-core::workflow.add_existing_section') }}
