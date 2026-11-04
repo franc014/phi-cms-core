@@ -318,6 +318,19 @@ it('denies a private draft preview when the manager lacks draft access', functio
     expect(request()->attributes->get('phi-cms.private'))->toBeNull();
 });
 
+it('loads editable draft rows without granting preview authority', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    Gate::define('preview', static fn (User $user, mixed $record): bool => false);
+
+    expect($content->draftItems('header'))->toBe([[
+        'item_key' => DB::table('menu_items')->where('stage', 'draft')->value('item_key'),
+        'label' => 'Specimens',
+        'destination' => ['kind' => 'page', 'page_id' => 1, 'anchor' => 'specimens'],
+    ]]);
+});
+
 it('marks reviewed draft content as private', function (): void {
     prepareMenuContentTest();
     $content = app(MenuContent::class);
@@ -497,3 +510,27 @@ it('rejects unsafe custom destinations before changing the menu draft', function
     'encoded protocol-relative path' => '/%2f%2funsafe.example.test/path',
     'backslash' => '/path\\unsafe',
 ]);
+
+it('rechecks target authorities before private preview and publication', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $review = $content->review('header', $menu->menu_version);
+
+    Gate::define('view', static fn (User $user, mixed $record): bool => false);
+
+    expect(fn () => $content->preview('header'))
+        ->toThrow(AuthorizationException::class)
+        ->and(fn () => $content->publish('header', $review['version'], $review['token']))
+        ->toThrow(AuthorizationException::class)
+        ->and($content->published('header'))
+        ->toHaveCount(1);
+});
+
+it('preserves the underlying cause of a menu conflict', function (): void {
+    $previous = new RuntimeException('deadlock detected');
+
+    $conflict = new MenuConflict(previous: $previous);
+
+    expect($conflict->getPrevious())->toBe($previous);
+});

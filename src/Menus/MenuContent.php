@@ -3,6 +3,7 @@
 namespace JFA\PhiCmsCore\Menus;
 
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -144,8 +145,9 @@ final class MenuContent
     {
         $menu = $this->adoptedMenu($key);
         $this->assertDeclarationCurrent($menu, $key);
-        $rows = $this->publicRows($menu);
-        $resolved = $this->resolveRows($menu, $key, $rows, preview: false);
+        $resolved = $this->withConsistentReadSnapshot(function () use ($menu, $key): array {
+            return $this->resolveRows($menu, $key, $this->publicRows($menu), preview: false);
+        });
 
         return array_values(array_map(
             static fn (array $row): array => [
@@ -164,19 +166,47 @@ final class MenuContent
         $actor = $this->authorizeMenu('preview', $menu);
         $this->authorizeMenu('viewDraft', $menu, $actor);
         $this->markPrivateResponse();
-        $this->assertDeclarationCurrent($menu, $key);
-        $resolved = $this->resolveRows($menu, $key, $this->draftRows($menu), preview: true, actor: $actor);
+        $snapshot = $this->withConsistentReadSnapshot(function () use ($key, $actor): array {
+            $menu = $this->adoptedMenu($key);
+            $actor = $this->authorizeMenu('preview', $menu, $actor);
+            $this->authorizeMenu('viewDraft', $menu, $actor);
+            $this->assertDeclarationCurrent($menu, $key);
+
+            return [
+                'menu' => $menu,
+                'rows' => $this->resolveRows($menu, $key, $this->draftRows($menu), preview: true, actor: $actor),
+            ];
+        });
+        /** @var array{menu: Menu, rows: list<array<string, mixed>>} $snapshot */
 
         return [
-            'items' => array_map(fn (array $row): array => $this->previewRow($row), $resolved),
+            'items' => array_map(fn (array $row): array => $this->previewRow($row), $snapshot['rows']),
             'feedback' => array_values(array_filter(array_map(
                 fn (array $row): ?array => $row['resolution']['status'] === 'unavailable'
                     ? ['item_key' => (string) $row['item_key'], 'message' => $row['resolution']['message']]
                     : null,
-                $resolved,
+                $snapshot['rows'],
             ))),
-            'version' => (int) $menu->menu_version,
+            'version' => (int) $snapshot['menu']->menu_version,
         ];
+    }
+
+    /** @return list<array{item_key: string, label: string, destination: array<string, mixed>|null}> */
+    public function draftItems(string $key): array
+    {
+        $menu = $this->adoptedMenu($key);
+        $this->authorizeMenu('viewDraft', $menu);
+        $this->markPrivateResponse();
+        $this->assertDeclarationCurrent($menu, $key);
+
+        return array_map(
+            static fn (array $row): array => [
+                'item_key' => (string) $row['item_key'],
+                'label' => (string) $row['label'],
+                'destination' => $row['destination'],
+            ],
+            $this->draftRows($menu),
+        );
     }
 
     /**
@@ -199,7 +229,7 @@ final class MenuContent
         return $this->transaction(function () use ($key, $menu, $actor, $validatedRows, $expectedVersion): int {
             $oldRows = $this->draftRows($menu);
             $lockRows = array_merge($oldRows, $validatedRows);
-            $this->lockReferences($lockRows);
+            $this->lockReferences($lockRows, $menu->adoption_bindings);
             $fresh = $this->lockMenu($menu, $oldRows);
             $actor = $this->authorizeMenu('update', $fresh, $actor);
             $this->authorizeMenu('viewDraft', $fresh, $actor);
@@ -275,7 +305,7 @@ final class MenuContent
 
         return $this->transaction(function () use ($key, $menu, $actor, $expectedVersion): array {
             $rows = $this->draftRows($menu);
-            $this->lockReferences($rows);
+            $this->lockReferences($rows, $menu->adoption_bindings);
             $fresh = $this->lockMenu($menu, $rows);
             $actor = $this->authorizeMenu('publish', $fresh, $actor);
             $this->authorizeMenu('viewDraft', $fresh, $actor);
@@ -304,7 +334,7 @@ final class MenuContent
 
         return $this->transaction(function () use ($key, $menu, $actor, $expectedVersion, $reviewToken): int {
             $rows = $this->draftRows($menu);
-            $this->lockReferences($rows);
+            $this->lockReferences($rows, $menu->adoption_bindings);
             $fresh = $this->lockMenu($menu, $rows);
             $actor = $this->authorizeMenu('publish', $fresh, $actor);
             $this->authorizeMenu('viewDraft', $fresh, $actor);
@@ -453,7 +483,7 @@ final class MenuContent
 
         $choices = [];
         foreach (($binding['anchors'] ?? []) as $anchor => $anchorBinding) {
-            $resolution = $this->anchorDefinition($menu, $page, $key, $anchor, preview: true, actor: $actor);
+            $resolution = $this->anchorDefinition($menu, $page, $anchor);
             if (! $resolution['available']) {
                 continue;
             }
@@ -801,7 +831,7 @@ final class MenuContent
                 if (! $this->mayUsePage($actor, $page, $isDraft)) {
                     throw ValidationException::withMessages([$path => 'You cannot use this Page as a menu destination.']);
                 }
-                $href = $this->pageHref($menu, $menuKey, $page, $destination['anchor'], preview: true, actor: $actor, validateAnchor: true);
+                $href = $this->pageHref($menu, $page, $destination['anchor'], validateAnchor: true);
                 if ($href === null) {
                     throw ValidationException::withMessages([$path => 'No public route is declared for this Page.']);
                 }
@@ -893,9 +923,22 @@ final class MenuContent
         return true;
     }
 
-    private function pageHref(Menu $menu, string $key, Page $page, ?string $anchor, bool $preview, ?Authenticatable $actor, bool $validateAnchor): ?string
+    private function authorizePageTarget(Authenticatable $actor, Page $page, bool $draft): void
     {
-        if ($validateAnchor && $anchor !== null && ! $this->anchorDefinition($menu, $page, $key, $anchor, $preview, $actor)['available']) {
+        $gate = Gate::forUser($actor);
+        $gate->authorize('viewAny', Page::class);
+        $gate->authorize('view', $page);
+        $gate->authorize('useInMenu', $page);
+
+        if ($draft) {
+            $gate->authorize('preview', $page);
+            $gate->authorize('viewDraft', $page);
+        }
+    }
+
+    private function pageHref(Menu $menu, Page $page, ?string $anchor, bool $validateAnchor, array $snapshot = []): ?string
+    {
+        if ($validateAnchor && $anchor !== null && ! $this->anchorDefinition($menu, $page, $anchor, $snapshot)['available']) {
             throw ValidationException::withMessages(['destination.anchor' => 'Choose a developer-exposed anchor that belongs to this Page.']);
         }
         $fixedPage = $this->fixedPageBinding($menu, $page->getKey());
@@ -916,7 +959,7 @@ final class MenuContent
                 return null;
             }
             $slug = $page->status === PageStatus::PUBLISHED
-                ? $this->currentPublicSlug($page)
+                ? $this->currentPublicSlug($page, $snapshot)
                 : (is_array($page->draft_fields) ? ($page->draft_fields['slug'] ?? null) : null);
             if (! is_string($slug) || $slug === '') {
                 return null;
@@ -933,7 +976,7 @@ final class MenuContent
     }
 
     /** @return array{available: bool, section_id: int|null, message: string|null} */
-    private function anchorDefinition(Menu $menu, Page $page, string $key, string $anchor, bool $preview, ?Authenticatable $actor): array
+    private function anchorDefinition(Menu $menu, Page $page, string $anchor, ?array $snapshot = null): array
     {
         $binding = $this->fixedPageBinding($menu, $page->getKey());
         if ($binding === null) {
@@ -946,15 +989,13 @@ final class MenuContent
             || ($anchorConfig['section_slug'] !== $anchorBinding['section_slug'])) {
             return ['available' => false, 'section_id' => null, 'message' => 'The developer anchor declaration changed.'];
         }
-        $section = Section::query()->find((int) $anchorBinding['section_id']);
+        $sectionId = (int) $anchorBinding['section_id'];
+        $section = $snapshot['sections'][$sectionId] ?? Section::query()->find($sectionId);
         if ($section === null || $section->slug !== $anchorBinding['section_slug'] || $section->status !== SectionStatus::ACTIVE) {
-            return ['available' => false, 'section_id' => (int) $anchorBinding['section_id'], 'message' => 'The anchor Section is unavailable.'];
+            return ['available' => false, 'section_id' => $sectionId, 'message' => 'The anchor Section is unavailable.'];
         }
-        $assignment = DB::table('page_section')
-            ->where('page_id', $page->getKey())
-            ->where('section_id', $section->getKey())
-            ->where('stage', 'published')
-            ->first();
+        $membershipKey = $page->getKey() . '|' . $section->getKey();
+        $assignment = $snapshot['memberships'][$membershipKey] ?? $this->publishedMembership((int) $page->getKey(), (int) $section->getKey());
         if ($assignment === null || ($page->page_version !== null && (! is_string($anchorBinding['slot'] ?? null) || $assignment->slot !== $anchorBinding['slot']))) {
             return ['available' => false, 'section_id' => (int) $section->getKey(), 'message' => 'The anchor is no longer in this Page’s public composition.'];
         }
@@ -1044,11 +1085,12 @@ final class MenuContent
     /** @return list<array<string, mixed>> */
     private function resolveRows(Menu $menu, string $key, array $rows, bool $preview, ?Authenticatable $actor = null): array
     {
+        $snapshot = $this->referenceSnapshot($menu, $rows);
         $resolved = [];
         foreach ($rows as $row) {
             $destination = $row['destination'] ?? null;
             $resolution = is_array($destination)
-                ? $this->resolveDestination($menu, $key, $destination, $preview, $actor)
+                ? $this->resolveDestination($menu, $key, $destination, $preview, $actor, $snapshot)
                 : ['href' => null, 'status' => 'unavailable', 'message' => 'This menu item has no supported destination.', 'title' => null, 'fingerprint' => ['missing_destination' => true]];
             $resolved[] = $row + ['resolution' => $resolution];
         }
@@ -1057,7 +1099,7 @@ final class MenuContent
     }
 
     /** @return array{href: string|null, status: string, message: string|null, title: string|null, proposed_path?: string|null, fingerprint: array<string, mixed>} */
-    private function resolveDestination(Menu $menu, string $menuKey, array $destination, bool $preview, ?Authenticatable $actor): array
+    private function resolveDestination(Menu $menu, string $menuKey, array $destination, bool $preview, ?Authenticatable $actor, array $snapshot): array
     {
         $kind = $destination['kind'] ?? null;
         if ($kind === 'custom' && is_string($destination['url'] ?? null) && $this->isSafeCustomUrl($destination['url'])) {
@@ -1073,22 +1115,26 @@ final class MenuContent
             return ['href' => $href, 'status' => 'available', 'message' => null, 'title' => $fixed['label'] ?? null, 'fingerprint' => ['kind' => 'fixed', 'key' => $destination['key'], 'route' => $fixed['route'], 'href' => $href]];
         }
         if ($kind === 'page' && is_int($destination['page_id'] ?? null)) {
-            return $this->resolvePage($menu, $menuKey, $destination['page_id'], $destination['anchor'] ?? null, $preview, $actor);
+            return $this->resolvePage($menu, $menuKey, $destination['page_id'], $destination['anchor'] ?? null, $preview, $actor, $snapshot);
         }
 
         return $this->unavailable('This destination is no longer registered.', ['destination' => $destination]);
     }
 
     /** @return array{href: string|null, status: string, message: string|null, title: string|null, proposed_path?: string|null, fingerprint: array<string, mixed>} */
-    private function resolvePage(Menu $menu, string $key, int $pageId, ?string $anchor, bool $preview, ?Authenticatable $actor): array
+    private function resolvePage(Menu $menu, string $key, int $pageId, ?string $anchor, bool $preview, ?Authenticatable $actor, array $snapshot = []): array
     {
-        $page = Page::query()->find($pageId);
+        $page = $snapshot['pages'][$pageId] ?? Page::query()->find($pageId);
         if ($page === null) {
             return $this->unavailable('The referenced Page has been removed.', ['kind' => 'page', 'page_id' => $pageId, 'anchor' => $anchor]);
         }
+        if ($preview) {
+            abort_if(! $actor instanceof Authenticatable, 403);
+            $this->authorizePageTarget($actor, $page, $page->status !== PageStatus::PUBLISHED);
+        }
         if ($page->status !== PageStatus::PUBLISHED) {
-            $canReadDraft = $actor instanceof Authenticatable && $this->mayUsePage($actor, $page, draft: true);
-            $proposedPath = $canReadDraft ? $this->pageHref($menu, $key, $page, $anchor, preview: true, actor: $actor, validateAnchor: false) : null;
+            $canReadDraft = $preview;
+            $proposedPath = $canReadDraft ? $this->pageHref($menu, $page, $anchor, validateAnchor: false, snapshot: $snapshot) : null;
 
             return [
                 'href' => null,
@@ -1099,11 +1145,11 @@ final class MenuContent
                 'fingerprint' => ['kind' => 'page', 'page_id' => $pageId, 'status' => $page->status->value, 'version' => $page->page_version, 'proposed_path' => $proposedPath, 'anchor' => $anchor],
             ];
         }
-        $anchorResolution = $anchor === null ? ['available' => true, 'section_id' => null, 'message' => null] : $this->anchorDefinition($menu, $page, $key, $anchor, $preview, $actor);
-        $href = $anchorResolution['available'] ? $this->pageHref($menu, $key, $page, $anchor, $preview, $actor, validateAnchor: false) : null;
+        $anchorResolution = $anchor === null ? ['available' => true, 'section_id' => null, 'message' => null] : $this->anchorDefinition($menu, $page, $anchor, $snapshot);
+        $href = $anchorResolution['available'] ? $this->pageHref($menu, $page, $anchor, validateAnchor: false, snapshot: $snapshot) : null;
         if ($href === null || ! $anchorResolution['available']) {
             return $this->unavailable($anchorResolution['message'] ?? 'No public route is declared for this Page.', [
-                'kind' => 'page', 'page_id' => $pageId, 'slug' => $this->currentPublicSlug($page),
+                'kind' => 'page', 'page_id' => $pageId, 'slug' => $this->currentPublicSlug($page, $snapshot),
                 'anchor' => $anchor, 'section_id' => $anchorResolution['section_id'],
             ], $page->title);
         }
@@ -1117,11 +1163,13 @@ final class MenuContent
                 'kind' => 'page',
                 'page_id' => $pageId,
                 'status' => $page->status->value,
-                'slug' => $this->currentPublicSlug($page),
+                'slug' => $this->currentPublicSlug($page, $snapshot),
                 'href' => $href,
                 'anchor' => $anchor,
                 'section_id' => $anchorResolution['section_id'],
-                'section_status' => $anchorResolution['section_id'] === null ? null : Section::query()->whereKey($anchorResolution['section_id'])->value('status'),
+                'section_status' => $anchorResolution['section_id'] === null
+                    ? null
+                    : (($snapshot['sections'][$anchorResolution['section_id']]->status ?? null)?->value ?? null),
             ],
         ];
     }
@@ -1180,8 +1228,13 @@ final class MenuContent
         ];
     }
 
-    private function currentPublicSlug(Page $page): string
+    private function currentPublicSlug(Page $page, array $snapshot = []): string
     {
+        $snapshotSlug = $snapshot['page_urls'][$page->getKey()] ?? null;
+        if (is_string($snapshotSlug) && $snapshotSlug !== '') {
+            return $snapshotSlug;
+        }
+
         if (Schema::hasTable('page_urls')) {
             $slug = PageUrl::query()->where('page_id', $page->getKey())->where('kind', 'current')->value('slug');
             if (is_string($slug) && $slug !== '') {
@@ -1190,6 +1243,86 @@ final class MenuContent
         }
 
         return (string) $page->slug;
+    }
+
+    /** @return array{pages: array<int, Page>, sections: array<int, Section>, page_urls: array<int, string>, memberships: array<string, object>} */
+    private function referenceSnapshot(Menu $menu, array $rows): array
+    {
+        $pageIds = [];
+        $sectionIds = [];
+        foreach ($rows as $row) {
+            $destination = $row['destination'] ?? null;
+            if (! is_array($destination) || ($destination['kind'] ?? null) !== 'page' || ! is_int($destination['page_id'] ?? null)) {
+                continue;
+            }
+
+            $pageId = $destination['page_id'];
+            $pageIds[] = $pageId;
+            if (! is_string($destination['anchor'] ?? null)) {
+                continue;
+            }
+
+            $binding = $this->fixedPageBinding($menu, $pageId);
+            $sectionId = is_array($binding)
+                ? ($binding['anchors'][$destination['anchor']]['section_id'] ?? null)
+                : null;
+            if (is_int($sectionId)) {
+                $sectionIds[] = $sectionId;
+            }
+        }
+
+        $pageIds = array_values(array_unique($pageIds));
+        $sectionIds = array_values(array_unique($sectionIds));
+        sort($pageIds, SORT_NUMERIC);
+        sort($sectionIds, SORT_NUMERIC);
+
+        $pages = $pageIds === []
+            ? []
+            : Page::query()->whereIn('id', $pageIds)->get()->keyBy(fn (Page $page): int => (int) $page->getKey())->all();
+        $sections = $sectionIds === []
+            ? []
+            : Section::query()->whereIn('id', $sectionIds)->get()->keyBy(fn (Section $section): int => (int) $section->getKey())->all();
+
+        $pageUrls = [];
+        if ($pageIds !== [] && Schema::hasTable('page_urls')) {
+            $pageUrls = PageUrl::query()->whereIn('page_id', $pageIds)->where('kind', 'current')->get()
+                ->mapWithKeys(fn (PageUrl $url): array => [(int) $url->page_id => (string) $url->slug])
+                ->all();
+        }
+
+        $memberships = [];
+        if ($pageIds !== [] && $sectionIds !== [] && Schema::hasTable('page_section')) {
+            $query = DB::table('page_section')
+                ->whereIn('page_id', $pageIds)
+                ->whereIn('section_id', $sectionIds);
+            if (Schema::hasColumn('page_section', 'stage')) {
+                $query->where('stage', 'published');
+            }
+            $memberships = $query->get()->keyBy(fn (object $assignment): string => $assignment->page_id . '|' . $assignment->section_id)->all();
+        }
+
+        return [
+            'pages' => $pages,
+            'sections' => $sections,
+            'page_urls' => $pageUrls,
+            'memberships' => $memberships,
+        ];
+    }
+
+    private function publishedMembership(int $pageId, int $sectionId): ?object
+    {
+        if (! Schema::hasTable('page_section')) {
+            return null;
+        }
+
+        $query = DB::table('page_section')
+            ->where('page_id', $pageId)
+            ->where('section_id', $sectionId);
+        if (Schema::hasColumn('page_section', 'stage')) {
+            $query->where('stage', 'published');
+        }
+
+        return $query->first();
     }
 
     /** @param list<array<string, mixed>> $rows */
@@ -1217,14 +1350,98 @@ final class MenuContent
                 }
             }
         }
-        sort($sectionIds, SORT_NUMERIC);
+
+        $pageIds = array_values(array_unique($pageIds));
+        $sectionIds = array_values(array_unique($sectionIds));
         sort($pageIds, SORT_NUMERIC);
+        sort($sectionIds, SORT_NUMERIC);
+
+        $pages = $pageIds === []
+            ? collect()
+            : Page::query()->whereIn('id', $pageIds)->orderBy('id')->get();
+        $pageState = $this->pageReferenceState($pageIds, $pages);
+        $urlSlugs = $this->pageUrlLockSet($pageIds, $pages);
+        $urlClaims = $this->pageUrlClaims($pageIds, $urlSlugs, lock: true);
+
         if ($sectionIds !== []) {
-            Section::query()->whereIn('id', array_values(array_unique($sectionIds)))->orderBy('id')->lockForUpdate()->get();
+            Section::query()->whereIn('id', $sectionIds)->orderBy('id')->lockForUpdate()->get();
         }
-        if ($pageIds !== []) {
-            Page::query()->whereIn('id', array_values(array_unique($pageIds)))->orderBy('id')->lockForUpdate()->get();
+
+        $lockedPages = $pageIds === []
+            ? collect()
+            : Page::query()->whereIn('id', $pageIds)->orderBy('id')->lockForUpdate()->get();
+        if ($this->pageReferenceState($pageIds, $lockedPages) !== $pageState
+            || $this->pageUrlClaims($pageIds, $urlSlugs) !== $urlClaims) {
+            throw new MenuConflict('A Page or URL reference changed while waiting for the menu lock. Reload and retry.');
         }
+    }
+
+    /** @param list<int> $pageIds */
+    private function pageReferenceState(array $pageIds, iterable $pages): array
+    {
+        $state = array_fill_keys($pageIds, null);
+        foreach ($pages as $page) {
+            $draftFields = $page->draft_fields;
+            $state[(int) $page->getKey()] = [
+                'page_version' => $page->page_version,
+                'status' => $page->getRawOriginal('status'),
+                'slug' => (string) $page->slug,
+                'draft_slug' => is_array($draftFields) && is_string($draftFields['slug'] ?? null)
+                    ? $draftFields['slug']
+                    : null,
+            ];
+        }
+
+        return $state;
+    }
+
+    /** @param list<int> $pageIds */
+    private function pageUrlLockSet(array $pageIds, iterable $pages): array
+    {
+        $slugs = [];
+        foreach ($pages as $page) {
+            $slugs[] = (string) $page->slug;
+            $draftFields = $page->draft_fields;
+            if (is_array($draftFields) && is_string($draftFields['slug'] ?? null)) {
+                $slugs[] = $draftFields['slug'];
+            }
+        }
+        if ($pageIds !== [] && Schema::hasTable('page_urls')) {
+            foreach (PageUrl::query()->whereIn('page_id', $pageIds)->pluck('slug') as $slug) {
+                $slugs[] = (string) $slug;
+            }
+        }
+
+        $slugs = array_values(array_unique(array_filter($slugs, static fn (string $slug): bool => $slug !== '')));
+        sort($slugs, SORT_STRING);
+
+        return $slugs;
+    }
+
+    /**
+     * @param  list<int>  $pageIds
+     * @param  list<string>  $slugs
+     * @return list<array<string, mixed>>
+     */
+    private function pageUrlClaims(array $pageIds, array $slugs, bool $lock = false): array
+    {
+        if ($pageIds === [] || ! Schema::hasTable('page_urls')) {
+            return [];
+        }
+
+        $query = PageUrl::query()->where(function (Builder $query) use ($pageIds, $slugs): void {
+            $query->whereIn('page_id', $pageIds);
+            if ($slugs !== []) {
+                $query->orWhereIn('slug', $slugs);
+            }
+        });
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        return $query->orderBy('slug')->orderBy('id')->get()
+            ->map(fn (PageUrl $url): array => $url->getAttributes())
+            ->all();
     }
 
     /** @return array<string, mixed>|null */
@@ -1295,6 +1512,21 @@ final class MenuContent
     private function reviewKey(Menu $menu): string
     {
         return 'phi-cms.reviews.menus.' . $menu->getKey();
+    }
+
+    private function withConsistentReadSnapshot(\Closure $callback): mixed
+    {
+        if (DB::transactionLevel() > 0) {
+            return $callback();
+        }
+
+        return DB::transaction(function () use ($callback): mixed {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            }
+
+            return $callback();
+        });
     }
 
     private function transaction(\Closure $callback): mixed

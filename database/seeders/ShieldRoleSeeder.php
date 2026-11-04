@@ -66,14 +66,19 @@ class ShieldRoleSeeder extends Seeder
     }
 
     /**
-     * Page and Section workflow authority stays independent from the CRUD grants.
+     * Menu, Page and Section workflow authority stays independent from CRUD grants.
      *
      * @return array<int, string>
      */
     private function workflowPermissions(): array
     {
         return [
+            'Preview:Menu',
+            'ViewDraft:Menu',
+            'Publish:Menu',
             'Preview:Page',
+            'ViewDraft:Page',
+            'UseInMenu:Page',
             'Compose:Page',
             'Publish:Page',
             'ViewDraft:Section',
@@ -94,6 +99,8 @@ class ShieldRoleSeeder extends Seeder
             'ViewAny:Post', 'View:Post', 'Create:Post', 'Update:Post', 'Delete:Post', 'DeleteAny:Post',
             'ViewAny:Category', 'View:Category', 'Create:Category', 'Update:Category', 'Delete:Category', 'DeleteAny:Category',
             'ViewAny:Menu', 'View:Menu', 'Create:Menu', 'Update:Menu', 'Delete:Menu', 'DeleteAny:Menu',
+            'Preview:Menu', 'ViewDraft:Menu', 'Publish:Menu',
+            'ViewDraft:Page', 'UseInMenu:Page',
             'ViewAny:Role', 'View:Role', 'Create:Role', 'Update:Role', 'Delete:Role', 'DeleteAny:Role',
             'View:ManageCompany',
             'EditFrontendContent',
@@ -108,6 +115,8 @@ class ShieldRoleSeeder extends Seeder
         return [
             'ViewAny:Page', 'View:Page',
             'ViewAny:Section', 'View:Section', 'Update:Section',
+            'Preview:Menu', 'ViewDraft:Menu',
+            'Preview:Page', 'ViewDraft:Page', 'UseInMenu:Page',
             'View:ManageCompany',
             'EditFrontendContent',
         ];

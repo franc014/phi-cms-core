@@ -25,6 +25,22 @@ Active does not mean published: new/copied Sections explicitly show **Unpublishe
 
 Normal Page deletion is authorized, version-checked and atomic, requires no export storage, and retains independent Sections/files. Explicit Section deletion still refuses actual draft/public references and protected owned media; snapshots or historical recovery files alone are not a deletion blocker. Private immutable media, conservative current-usage checks and tombstoned retryable physical cleanup remain mandatory. Transaction rollback on failed writes remains unchanged; it is not legacy downgrade support. See `docs/company-page-workflow.md` in the demo for workflow and verification guidance. Arbitrary native field normalization, Gallery/media copy and Chocotour arbitrary Page routing remain outside this slice.
 
+## Flat developer-declared menus
+
+Hosts may register a flat menu under `phi-cms.navigation.menus` and declare its fixed Page anchors and parameter-free host routes under `fixed_pages` and `fixed_links`. Menu adoption is explicit and never repurposes or rewrites a legacy menu:
+
+```bash
+php artisan phi-cms:menus:inventory header
+php artisan phi-cms:menus:adopt header
+php artisan phi-cms:menus:adopt header --apply
+```
+
+`inventory` and adoption preflight are write-free. `--apply` creates equal draft and published rows, stable item identities and the stored developer bindings. Adopted rows must be changed through `MenuContent`; direct model writes are rejected. A host should enable public rendering only after successful adoption and should render `MenuContent::published($key)` for public requests.
+
+The editorial lifecycle is **save draft → review → publish**. Drafts never change the published list. Versions, actor-bound review tokens and destination fingerprints reject stale saves or reviews without partial publication. Page destinations are rechecked on private reads and inside the save/review/publish transactions. Public resolution omits unavailable destinations; authorized previews retain feedback and never turn an unavailable destination into a link.
+
+Menu and Page authority is independent. Hosts must grant the menu abilities required by the operation (`update`, `preview`, `viewDraft`, `publish`) and Page target abilities (`viewAny`, `view`, `useInMenu`, plus `preview` and `viewDraft` for a draft Page). `EditFrontendContent` is not an implicit substitute for these grants. Custom destinations accept only safe HTTP(S) URLs or site-root paths and remain explicitly untracked.
+
 ## Requirements
 
 - PHP 8.3+

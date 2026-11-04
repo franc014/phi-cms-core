@@ -87,7 +87,7 @@ class EditMenu extends EditRecord
                         'preview' => app(MenuContent::class)->preview($key),
                     ]))
                     ->modalSubmitAction(false)
-                    ->visible(fn (): bool => $this->mayViewDraft()),
+                    ->visible(fn (): bool => $this->mayPreviewMenu()),
                 Action::make('reviewMenuPublication')
                     ->label('Review publication')
                     ->icon(Heroicon::OutlinedClipboardDocumentCheck)
@@ -131,14 +131,7 @@ class EditMenu extends EditRecord
     {
         return Repeater::make('items')
             ->label('Flat menu links')
-            ->default(fn (): array => array_map(
-                static fn (array $row): array => [
-                    'item_key' => $row['item_key'],
-                    'label' => $row['label'],
-                    'destination' => $row['destination'],
-                ],
-                app(MenuContent::class)->preview($key)['items'],
-            ))
+            ->default(fn (): array => app(MenuContent::class)->draftItems($key))
             ->schema([
                 Hidden::make('item_key'),
                 TextInput::make('label')
@@ -267,12 +260,14 @@ class EditMenu extends EditRecord
         return $actor !== null && $actor->can('update', $menu);
     }
 
-    private function mayViewDraft(): bool
+    private function mayPreviewMenu(): bool
     {
         $actor = auth()->user()?->fresh();
         $menu = $this->getRecord()->fresh();
 
-        return $actor !== null && $actor->can('viewDraft', $menu);
+        return $actor !== null
+            && $actor->can('preview', $menu)
+            && $actor->can('viewDraft', $menu);
     }
 
     private function mayPublishMenu(): bool

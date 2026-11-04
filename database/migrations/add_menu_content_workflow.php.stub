@@ -24,15 +24,6 @@ return new class extends Migration {
 
     public function down(): void
     {
-        Schema::table('menu_items', function (Blueprint $table): void {
-            $table->dropIndex('menu_items_stage_order_index');
-            $table->dropUnique('menu_items_menu_stage_item_key_unique');
-            $table->dropColumn(['stage', 'item_key', 'destination']);
-        });
-
-        Schema::table('menus', function (Blueprint $table): void {
-            $table->dropUnique(['key']);
-            $table->dropColumn(['key', 'menu_version', 'adoption_bindings']);
-        });
+        throw new RuntimeException('Menu workflow columns are additive and must not be destructively downgraded.');
     }
 };
