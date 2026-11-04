@@ -2,11 +2,11 @@
 
 namespace JFA\PhiCmsCore\Resources\Menus\Tables;
 
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
-use Filament\Actions\EditAction;
+use Filament\Actions\Action;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use JFA\PhiCmsCore\Models\Menu;
+use JFA\PhiCmsCore\Resources\Menus\MenuResource;
 
 class MenusTable
 {
@@ -36,12 +36,21 @@ class MenusTable
             ])
             ->filters([])
             ->recordActions([
-                EditAction::make(),
+                Action::make('manageMenu')
+                    ->label('Manage')
+                    ->url(fn (Menu $record): string => MenuResource::getUrl('edit', ['record' => $record]))
+                    ->visible(function (Menu $record): bool {
+                        $actor = auth()->user()?->fresh();
+                        if ($actor === null) {
+                            return false;
+                        }
+
+                        return $record->menu_version === null
+                            ? $actor->can('update', $record)
+                            : $actor->can('viewDraft', $record)
+                                && ($actor->can('update', $record) || $actor->can('publish', $record));
+                    }),
             ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->toolbarActions([]);
     }
 }

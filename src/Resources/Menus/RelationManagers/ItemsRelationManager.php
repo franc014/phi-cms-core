@@ -16,11 +16,22 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use JFA\PhiCmsCore\Models\Menu;
 
 class ItemsRelationManager extends RelationManager
 {
     protected static string $relationship = 'items';
+
+    public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
+    {
+        if ($ownerRecord instanceof Menu && $ownerRecord->menu_version !== null) {
+            return false;
+        }
+
+        return parent::canViewForRecord($ownerRecord, $pageClass);
+    }
 
     public function form(Schema $schema): Schema
     {

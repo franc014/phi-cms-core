@@ -6,15 +6,19 @@ use Filament\Support\Assets\Asset;
 use Filament\Support\Facades\FilamentAsset;
 use Filament\Support\Facades\FilamentIcon;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Foundation\Http\Kernel;
 use Illuminate\Support\Facades\Blade;
 use JFA\PhiCmsCore\Commands\GalleryDeleteMediaCommand;
 use JFA\PhiCmsCore\Commands\GenerateBlocksCommand;
 use JFA\PhiCmsCore\Commands\GuardedCleanCommand;
+use JFA\PhiCmsCore\Commands\MenuAdoptCommand;
+use JFA\PhiCmsCore\Commands\MenuInventoryCommand;
 use JFA\PhiCmsCore\Commands\SeedCommand;
 use JFA\PhiCmsCore\Forms\Blocks\ContentBlockRegistry;
 use JFA\PhiCmsCore\Http\Middleware\AuthorizeSectionTemporaryPreview;
 use JFA\PhiCmsCore\Http\Middleware\PrivatePreviewResponse;
 use JFA\PhiCmsCore\Livewire\Preview;
+use JFA\PhiCmsCore\Menus\MenuContent;
 use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Pages\PageRegistry;
 use JFA\PhiCmsCore\Schema\FieldFactory;
@@ -142,6 +146,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             app(SectionRegistry::class),
         ));
         $this->app->scoped(PageContent::class);
+        $this->app->scoped(MenuContent::class);
 
         if (config('media-library.media_model') === Media::class) {
             config(['media-library.media_model' => Models\Media::class]);
@@ -198,7 +203,9 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                 }
             }
         });
-        $this->app['router']->pushMiddlewareToGroup('web', PrivatePreviewResponse::class);
+        $this->app->afterResolving(Kernel::class, function (): void {
+            $this->app['router']->prependMiddlewareToGroup('web', PrivatePreviewResponse::class);
+        });
         if (! in_array(AuthorizeSectionTemporaryPreview::class, FilePreviewController::$middleware, true)) {
             FilePreviewController::$middleware[] = AuthorizeSectionTemporaryPreview::class;
         }
@@ -276,6 +283,8 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             GenerateBlocksCommand::class,
             GalleryDeleteMediaCommand::class,
             SeedCommand::class,
+            MenuInventoryCommand::class,
+            MenuAdoptCommand::class,
         ];
     }
 
@@ -324,6 +333,7 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
             'create_page_legacy_occurrences_table',
             'use_named_slots_on_page_section',
             'create_page_action_submissions_table',
+            'add_menu_content_workflow',
         ];
     }
 }

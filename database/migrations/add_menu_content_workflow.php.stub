@@ -1,0 +1,38 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void
+    {
+        Schema::table('menus', function (Blueprint $table): void {
+            $table->string('key')->nullable()->unique();
+            $table->unsignedBigInteger('menu_version')->nullable();
+            $table->json('adoption_bindings')->nullable();
+        });
+
+        Schema::table('menu_items', function (Blueprint $table): void {
+            $table->string('stage')->default('published');
+            $table->uuid('item_key')->nullable();
+            $table->json('destination')->nullable();
+            $table->unique(['menu_id', 'stage', 'item_key'], 'menu_items_menu_stage_item_key_unique');
+            $table->index(['menu_id', 'stage', 'order_column', 'id'], 'menu_items_stage_order_index');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('menu_items', function (Blueprint $table): void {
+            $table->dropIndex('menu_items_stage_order_index');
+            $table->dropUnique('menu_items_menu_stage_item_key_unique');
+            $table->dropColumn(['stage', 'item_key', 'destination']);
+        });
+
+        Schema::table('menus', function (Blueprint $table): void {
+            $table->dropUnique(['key']);
+            $table->dropColumn(['key', 'menu_version', 'adoption_bindings']);
+        });
+    }
+};
