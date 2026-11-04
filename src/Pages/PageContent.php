@@ -231,7 +231,7 @@ final class PageContent
             $this->assertServicesCreationPage($fresh);
             $this->assertCopySource($sourceFresh, $expectedSourceVersion);
             $normalized = $this->normalizeServicesContent($sourceFresh->published_content);
-            if ($this->sections->get('services')::imageReferences($normalized) !== [] || $sourceFresh->getMedia()->isNotEmpty()) {
+            if ($this->sections->get('services')::imageReferences($normalized) !== [] || $sourceFresh->getMedia('*')->isNotEmpty()) {
                 throw ValidationException::withMessages(['source' => 'Only text-only published Services Sections can be copied.']);
             }
             $this->assertSubmissionReview($submissionToken, (int) $fresh->getKey(), $sourceFresh, $normalized);
@@ -503,7 +503,7 @@ final class PageContent
         $source = Section::query()->findOrFail($sourceId);
         $this->authorizeCopySource($source, (int) $source->content_version);
         $content = $this->normalizeServicesContent($source->published_content);
-        if ($this->sections->get('services')::imageReferences($content) !== [] || $source->getMedia()->isNotEmpty()) {
+        if ($this->sections->get('services')::imageReferences($content) !== [] || $source->getMedia('*')->isNotEmpty()) {
             throw ValidationException::withMessages(['source' => 'Only text-only published Services Sections can be copied.']);
         }
         $this->recordSubmissionReview(
@@ -1535,7 +1535,7 @@ final class PageContent
             'status' => $source->status->value,
             'content_version' => $source->content_version,
             'published_content' => $content,
-            'media_ids' => $source->getMedia()->pluck('id')->map(fn (mixed $id): int => (int) $id)->values()->all(),
+            'media_ids' => $source->getMedia('*')->pluck('id')->map(fn (mixed $id): int => (int) $id)->values()->all(),
             'definition' => $this->sectionDefinitionFingerprint((string) $source->type),
         ], JSON_THROW_ON_ERROR));
     }
