@@ -553,7 +553,7 @@ final class MenuContent
             return [];
         }
         $binding = $this->fixedPageBinding($menu, $pageId);
-        if ($binding === null) {
+        if ($binding === null || $this->fixedPageHostMessage($menu, $page) !== null) {
             return [];
         }
 
@@ -1058,6 +1058,9 @@ final class MenuContent
         }
         $fixedPage = $this->fixedPageBinding($menu, $page->getKey());
         if ($fixedPage !== null) {
+            if ($this->fixedPageHostMessage($menu, $page, $snapshot) !== null) {
+                return null;
+            }
             $declaration = config("phi-cms.navigation.fixed_pages.{$fixedPage['key']}");
             if (! is_array($declaration)
                 || ($declaration['route'] ?? null) !== $fixedPage['route']
@@ -1094,6 +1097,37 @@ final class MenuContent
         return $anchor === null ? $href : $href . '#' . rawurlencode($anchor);
     }
 
+    private function fixedPageHostMessage(Menu $menu, Page $page, array $snapshot = []): ?string
+    {
+        $fixedPage = $this->fixedPageBinding($menu, $page->getKey());
+        if ($fixedPage === null) {
+            return null;
+        }
+
+        $route = $fixedPage['route'] ?? null;
+        $pageSlug = $fixedPage['page_slug'] ?? null;
+        $declaration = config("phi-cms.navigation.fixed_pages.{$fixedPage['key']}");
+        if (! is_array($declaration)
+            || ! is_string($route)
+            || ! is_string($pageSlug)
+            || ($declaration['route'] ?? null) !== $route
+            || ($declaration['page_slug'] ?? null) !== $pageSlug
+            || ! Route::has($route)) {
+            return 'The fixed Page host declaration is unavailable or changed.';
+        }
+
+        $fixedPageCandidates = $snapshot['fixed_page_candidates'] ?? null;
+        $candidateIds = is_array($fixedPageCandidates)
+            && is_array($fixedPageCandidates[$pageSlug] ?? null)
+            ? $fixedPageCandidates[$pageSlug]
+            : Page::query()->where('slug', $pageSlug)->pluck('id')->map(fn (mixed $id): int => (int) $id)->all();
+        if (count($candidateIds) !== 1 || (int) $candidateIds[0] !== (int) $page->getKey()) {
+            return 'The fixed Page host does not uniquely resolve to its persisted Page identity. Review the Page slug and menu destination.';
+        }
+
+        return null;
+    }
+
     /** @return array{available: bool, section_id: int|null, message: string|null} */
     private function anchorDefinition(Menu $menu, Page $page, string $anchor, ?array $snapshot = null): array
     {
@@ -1127,8 +1161,14 @@ final class MenuContent
     /** @return array<string, mixed>|null */
     private function fixedPageBinding(Menu $menu, int | string $pageId): ?array
     {
-        foreach (($menu->adoption_bindings['fixed_pages'] ?? []) as $key => $binding) {
-            if ((int) ($binding['page_id'] ?? 0) === (int) $pageId) {
+        $adoptionBindings = $menu->adoption_bindings;
+        $fixedPages = is_array($adoptionBindings) ? ($adoptionBindings['fixed_pages'] ?? null) : null;
+        if (! is_array($fixedPages)) {
+            return null;
+        }
+
+        foreach ($fixedPages as $key => $binding) {
+            if (is_array($binding) && (int) ($binding['page_id'] ?? 0) === (int) $pageId) {
                 return $binding + ['key' => $key];
             }
         }
@@ -1268,6 +1308,15 @@ final class MenuContent
         if ($preview) {
             abort_if(! $actor instanceof Authenticatable, 403);
             $this->authorizePageTarget($actor, $page, $page->status !== PageStatus::PUBLISHED);
+        }
+        $fixedHostMessage = $this->fixedPageHostMessage($menu, $page, $snapshot);
+        if ($fixedHostMessage !== null) {
+            return $this->unavailable($fixedHostMessage, [
+                'kind' => 'page',
+                'page_id' => $pageId,
+                'slug' => $this->currentPublicSlug($page, $snapshot),
+                'anchor' => $anchor,
+            ], $page->title);
         }
         if ($page->status !== PageStatus::PUBLISHED) {
             $canReadDraft = $preview;
@@ -1412,11 +1461,12 @@ final class MenuContent
         return (string) $page->slug;
     }
 
-    /** @return array{pages: array<int, Page>, sections: array<int, Section>, page_urls: array<int, string>, memberships: array<string, object>} */
+    /** @return array{pages: array<int, Page>, sections: array<int, Section>, page_urls: array<int, string>, memberships: array<string, object>, fixed_page_candidates: array<string, list<int>>} */
     private function referenceSnapshot(Menu $menu, array $rows): array
     {
         $pageIds = [];
         $sectionIds = [];
+        $fixedPageSlugs = [];
         foreach ($rows as $row) {
             $destination = $row['destination'] ?? null;
             if (! is_array($destination) || ($destination['kind'] ?? null) !== 'page' || ! is_int($destination['page_id'] ?? null)) {
@@ -1425,11 +1475,14 @@ final class MenuContent
 
             $pageId = $destination['page_id'];
             $pageIds[] = $pageId;
+            $binding = $this->fixedPageBinding($menu, $pageId);
+            if (is_array($binding) && is_string($binding['page_slug'] ?? null)) {
+                $fixedPageSlugs[] = $binding['page_slug'];
+            }
             if (! is_string($destination['anchor'] ?? null)) {
                 continue;
             }
 
-            $binding = $this->fixedPageBinding($menu, $pageId);
             $sectionId = is_array($binding)
                 ? ($binding['anchors'][$destination['anchor']]['section_id'] ?? null)
                 : null;
@@ -1440,8 +1493,10 @@ final class MenuContent
 
         $pageIds = array_values(array_unique($pageIds));
         $sectionIds = array_values(array_unique($sectionIds));
+        $fixedPageSlugs = array_values(array_unique($fixedPageSlugs));
         sort($pageIds, SORT_NUMERIC);
         sort($sectionIds, SORT_NUMERIC);
+        sort($fixedPageSlugs, SORT_STRING);
 
         $pages = $pageIds === []
             ? []
@@ -1449,6 +1504,13 @@ final class MenuContent
         $sections = $sectionIds === []
             ? []
             : Section::query()->whereIn('id', $sectionIds)->get()->keyBy(fn (Section $section): int => (int) $section->getKey())->all();
+
+        $fixedPageCandidates = array_fill_keys($fixedPageSlugs, []);
+        if ($fixedPageSlugs !== []) {
+            foreach (Page::query()->whereIn('slug', $fixedPageSlugs)->orderBy('slug')->orderBy('id')->get(['id', 'slug']) as $candidate) {
+                $fixedPageCandidates[(string) $candidate->slug][] = (int) $candidate->getKey();
+            }
+        }
 
         $pageUrls = [];
         if ($pageIds !== [] && Schema::hasTable('page_urls')) {
@@ -1473,6 +1535,7 @@ final class MenuContent
             'sections' => $sections,
             'page_urls' => $pageUrls,
             'memberships' => $memberships,
+            'fixed_page_candidates' => $fixedPageCandidates,
         ];
     }
 

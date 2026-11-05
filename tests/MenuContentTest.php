@@ -297,6 +297,30 @@ it('refuses reconciliation to a replacement Page with the same declared slug', f
     expect($content->inventory('header'))->toBe($rows);
 });
 
+it('suppresses a fixed Page link when its declared host slug is reused by another Page', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    $original = DB::table('pages')->where('id', 1)->firstOrFail();
+
+    DB::table('pages')->where('id', 1)->update(['slug' => 'old-home']);
+    $replacement = (array) $original;
+    $replacement['id'] = 2;
+    $replacement['slug'] = 'home';
+    DB::table('pages')->insert($replacement);
+
+    expect($content->published('header'))->toBe([]);
+
+    $review = $content->review('header', 1);
+
+    expect($review['publishable'])->toBeFalse()
+        ->and($review['items'][0])->toMatchArray([
+            'href' => null,
+            'status' => 'unavailable',
+        ])
+        ->and($review['feedback'][0]['message'])->toContain('persisted Page identity');
+});
+
 it('refuses stale reconciliation without changing saved state', function (): void {
     prepareMenuContentTest();
     $content = app(MenuContent::class);
