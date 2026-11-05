@@ -321,6 +321,28 @@ it('suppresses a fixed Page link when its declared host slug is reused by anothe
         ->and($review['feedback'][0]['message'])->toContain('persisted Page identity');
 });
 
+it('suppresses a fixed Page link when its adopted binding is missing', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $bindings = $menu->adoption_bindings;
+    unset($bindings['fixed_pages']['home']);
+    DB::table('menus')->where('id', $menu->getKey())->update([
+        'adoption_bindings' => json_encode($bindings, JSON_THROW_ON_ERROR),
+    ]);
+
+    expect($content->published('header'))->toBe([]);
+
+    $review = $content->review('header', 1);
+
+    expect($review['publishable'])->toBeFalse()
+        ->and($review['items'][0])->toMatchArray([
+            'href' => null,
+            'status' => 'unavailable',
+        ])
+        ->and($review['feedback'][0]['message'])->toContain('binding');
+});
+
 it('refuses stale reconciliation without changing saved state', function (): void {
     prepareMenuContentTest();
     $content = app(MenuContent::class);

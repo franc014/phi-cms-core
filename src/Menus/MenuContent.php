@@ -1101,6 +1101,11 @@ final class MenuContent
     {
         $fixedPage = $this->fixedPageBinding($menu, $page->getKey());
         if ($fixedPage === null) {
+            $pageSlug = $page->getAttribute('slug');
+            if (is_string($pageSlug) && $this->fixedPageKeysForSlug($pageSlug) !== []) {
+                return 'The adopted fixed Page binding is missing for its declared host.';
+            }
+
             return null;
         }
 
@@ -1126,6 +1131,24 @@ final class MenuContent
         }
 
         return null;
+    }
+
+    /** @return list<string> */
+    private function fixedPageKeysForSlug(string $pageSlug): array
+    {
+        $fixedPages = config('phi-cms.navigation.fixed_pages', []);
+        if (! is_array($fixedPages)) {
+            return [];
+        }
+
+        $keys = [];
+        foreach ($fixedPages as $key => $declaration) {
+            if (is_string($key) && is_array($declaration) && ($declaration['page_slug'] ?? null) === $pageSlug) {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
     }
 
     /** @return array{available: bool, section_id: int|null, message: string|null} */
