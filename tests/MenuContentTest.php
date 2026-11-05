@@ -1,5 +1,7 @@
 <?php
 
+use Filament\Facades\Filament;
+use Filament\Panel;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User;
@@ -15,6 +17,9 @@ use JFA\PhiCmsCore\Menus\MenuConflict;
 use JFA\PhiCmsCore\Menus\MenuContent;
 use JFA\PhiCmsCore\Models\Menu;
 use JFA\PhiCmsCore\Models\MenuItem;
+use JFA\PhiCmsCore\Resources\Menus\MenuResource;
+use JFA\PhiCmsCore\Resources\Menus\Pages\EditMenu;
+use Livewire\Livewire;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 function prepareMenuContentTest(): void
@@ -189,6 +194,23 @@ function prepareMenuContentTest(): void
         'updated_at' => now(),
     ]);
 }
+
+it('opens the native draft editor with saved rows instead of a blank default list', function (): void {
+    prepareMenuContentTest();
+    config(['app.key' => 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=']);
+    $panel = Panel::make()->id('menu-test')->path('menu-test')
+        ->resources([MenuResource::class]);
+    Filament::registerPanel($panel);
+    Filament::setCurrentPanel($panel);
+    Route::get('/menu-test/menus', static fn (): string => 'Menus')->name('filament.menu-test.resources.menus.index');
+    Route::get('/menu-test/menus/{record}/edit', static fn (): string => 'Edit')->name('filament.menu-test.resources.menus.edit');
+    Route::getRoutes()->refreshNameLookups();
+    $menu = app(MenuContent::class)->adoptConfiguredMenu('header');
+
+    Livewire::test(EditMenu::class, ['record' => $menu->id])
+        ->mountAction('saveMenuDraft')
+        ->assertSet('mountedActions.0.data.items', fn (array $items): bool => array_column(array_values($items), 'label') === ['Specimens']);
+});
 
 it('keeps unaffected published links available after an unused valid declaration is added', function (): void {
     prepareMenuContentTest();
