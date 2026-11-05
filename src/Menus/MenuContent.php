@@ -1105,7 +1105,8 @@ final class MenuContent
         $anchorBinding = $binding['anchors'][$anchor] ?? null;
         if (! is_array($anchorConfig) || ! is_array($anchorBinding)
             || ! is_string($anchorConfig['section_slug'] ?? null)
-            || ($anchorConfig['section_slug'] !== $anchorBinding['section_slug'])) {
+            || ($anchorConfig['section_slug'] !== $anchorBinding['section_slug'])
+            || ($anchorConfig['slot'] ?? null) !== ($anchorBinding['slot'] ?? null)) {
             return ['available' => false, 'section_id' => null, 'message' => 'The developer anchor declaration changed.'];
         }
         $sectionId = (int) $anchorBinding['section_id'];

@@ -235,7 +235,7 @@ it('preflights declaration reconciliation without writing and applies it only ex
     expect($content->reconcileConfiguredMenu('header', 2))->toBe(2);
 });
 
-it('refuses invalid or rebound declarations and stale reconciliation without changing saved state', function (string $change): void {
+it('refuses invalid or rebound declarations without changing saved state', function (array $configuration): void {
     prepareMenuContentTest();
     $content = app(MenuContent::class);
     $menu = $content->adoptConfiguredMenu('header');
@@ -243,32 +243,71 @@ it('refuses invalid or rebound declarations and stale reconciliation without cha
     $rows = $content->inventory('header');
     Route::get('/other', static fn (): string => 'Other')->name('other');
     Route::getRoutes()->refreshNameLookups();
-    $version = 1;
-    if ($change === 'invalid addition') {
-        config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Missing', 'route' => 'missing']]);
-    } elseif ($change === 'fixed route rebound') {
-        config(['phi-cms.navigation.fixed_links.home.route' => 'other']);
-    } elseif ($change === 'Page route rebound') {
-        config(['phi-cms.navigation.fixed_pages.home.route' => 'other']);
-    } elseif ($change === 'anchor removed') {
-        config(['phi-cms.navigation.fixed_pages.home.anchors' => []]);
-    } elseif ($change === 'Page identity replaced') {
-        DB::table('pages')->where('id', 1)->update(['slug' => 'old-home']);
-        $replacement = DB::table('pages')->where('id', 1)->first();
-        $replacement->id = 2;
-        $replacement->slug = 'home';
-        DB::table('pages')->insert((array) $replacement);
-        DB::table('page_section')->where('page_id', 1)->update(['page_id' => 2]);
-    } else {
-        config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Additional', 'route' => 'home']]);
-        $version = 0;
-    }
+    config($configuration);
 
-    expect(fn () => $content->reconcileConfiguredMenu('header', $version))->toThrow(MenuConflict::class);
+    expect(fn () => $content->reconcileConfiguredMenu('header', 1))->toThrow(MenuConflict::class);
 
     expect($menu->fresh()->getAttributes())->toBe($before);
     expect($content->inventory('header'))->toBe($rows);
-})->with(['invalid addition', 'fixed route rebound', 'Page route rebound', 'anchor removed', 'Page identity replaced', 'stale version']);
+})->with([
+    'invalid addition' => [['phi-cms.navigation.fixed_links.additional' => ['label' => 'Missing', 'route' => 'missing']]],
+    'fixed route rebound' => [['phi-cms.navigation.fixed_links.home.route' => 'other']],
+    'Page route rebound' => [['phi-cms.navigation.fixed_pages.home.route' => 'other']],
+    'anchor removed' => [['phi-cms.navigation.fixed_pages.home.anchors' => []]],
+]);
+
+it('refuses reconciliation to a replacement Page with the same declared slug', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $before = $menu->getAttributes();
+    $rows = $content->inventory('header');
+    DB::table('pages')->where('id', 1)->update(['slug' => 'old-home']);
+    $replacement = DB::table('pages')->where('id', 1)->first();
+    $replacement->id = 2;
+    $replacement->slug = 'home';
+    DB::table('pages')->insert((array) $replacement);
+    DB::table('page_section')->where('page_id', 1)->update(['page_id' => 2]);
+
+    expect(fn () => $content->reconcileConfiguredMenu('header', 1))->toThrow(MenuConflict::class);
+
+    expect($menu->fresh()->getAttributes())->toBe($before);
+    expect($content->inventory('header'))->toBe($rows);
+});
+
+it('refuses stale reconciliation without changing saved state', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $before = $menu->getAttributes();
+    $rows = $content->inventory('header');
+    config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Additional', 'route' => 'home']]);
+
+    expect(fn () => $content->reconcileConfiguredMenu('header', 0))->toThrow(MenuConflict::class);
+
+    expect($menu->fresh()->getAttributes())->toBe($before);
+    expect($content->inventory('header'))->toBe($rows);
+});
+
+it('suppresses an anchor whose declared slot changed while retaining unaffected public links', function (): void {
+    prepareMenuContentTest();
+    config(['phi-cms.navigation.fixed_pages.home.anchors.specimens.slot' => 'specimens']);
+    DB::table('pages')->where('id', 1)->update(['page_version' => 1]);
+    DB::table('page_section')->where('page_id', 1)->update(['slot' => 'specimens']);
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    $items = $content->draftItems('header');
+    $items[] = ['item_key' => null, 'label' => 'Home root', 'destination' => ['kind' => 'fixed', 'key' => 'home']];
+    $content->saveDraft('header', $items, 1);
+    $review = $content->review('header', 2);
+    $content->publish('header', 2, $review['token']);
+    expect($content->published('header'))->toHaveCount(2);
+
+    config(['phi-cms.navigation.fixed_pages.home.anchors.specimens.slot' => 'replacement']);
+
+    expect($content->published('header'))->toHaveCount(1);
+    expect($content->published('header')[0])->toMatchArray(['label' => 'Home root', 'href' => '/']);
+});
 
 it('suppresses only a changed fixed destination without retargeting it or breaking unaffected public links', function (): void {
     prepareMenuContentTest();
