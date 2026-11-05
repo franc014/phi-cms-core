@@ -224,7 +224,6 @@ class EditMenu extends EditRecord
                     ->maxLength(2048)
                     ->visible(fn (Get $get): bool => $get('destination.kind') === 'custom'),
             ])
-            ->defaultItems(0)
             ->maxItems(100)
             ->reorderable()
             ->reorderableWithButtons()
