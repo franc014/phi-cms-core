@@ -8,14 +8,14 @@ use Throwable;
 
 class MenuAdoptCommand extends Command
 {
-    protected $signature = 'phi-cms:menus:adopt {key : A developer-declared menu key} {--apply : Persist the validated initial draft and public list}';
+    protected $signature = 'phi-cms:menus:adopt {key : A developer-declared menu key} {--apply : Persist the validated adoption or reconciliation} {--reconcile : Validate additive declaration changes without resetting menu items}';
 
     protected $description = 'Preflight and explicitly adopt a developer-declared PHI menu.';
 
     public function handle(MenuContent $menus): int
     {
         try {
-            $preflight = $menus->preflight((string) $this->argument('key'));
+            $preflight = $menus->preflight((string) $this->argument('key'), reconcile: (bool) $this->option('reconcile'));
         } catch (Throwable $exception) {
             $this->error($exception->getMessage());
 
@@ -29,12 +29,20 @@ class MenuAdoptCommand extends Command
             return self::FAILURE;
         }
         if (! $this->option('apply')) {
-            $this->info('Write-free preflight complete. Re-run with --apply to create equal draft and public rows.');
+            $this->info($this->option('reconcile')
+                ? 'Write-free reconciliation preflight complete. Re-run with --reconcile --apply to accept declarations and invalidate old reviews; menu items stay unchanged.'
+                : 'Write-free preflight complete. Re-run with --apply to create equal draft and public rows.');
 
             return self::SUCCESS;
         }
 
         try {
+            if ($this->option('reconcile')) {
+                $version = $menus->reconcileConfiguredMenu((string) $this->argument('key'), $preflight['version']);
+                $this->info("Reconciled menu [{$preflight['key']}] at version {$version}. Review the saved draft again before publishing.");
+
+                return self::SUCCESS;
+            }
             $menu = $menus->adoptConfiguredMenu((string) $this->argument('key'));
         } catch (Throwable $exception) {
             $this->error($exception->getMessage());

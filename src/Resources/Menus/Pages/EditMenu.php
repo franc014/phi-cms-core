@@ -11,6 +11,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Gate;
@@ -193,6 +194,8 @@ class EditMenu extends EditRecord
                     ->live(),
                 Select::make('destination.page_id')
                     ->label('Page')
+                    ->live()
+                    ->afterStateUpdated(fn (Set $set) => $set('destination.anchor', null))
                     ->searchable()
                     ->getSearchResultsUsing(fn (string $search): array => collect(app(MenuContent::class)->destinationChoices($key, $search))
                         ->filter(fn (array $choice): bool => ($choice['destination']['kind'] ?? null) === 'page')

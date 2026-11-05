@@ -190,6 +190,105 @@ function prepareMenuContentTest(): void
     ]);
 }
 
+it('keeps unaffected published links available after an unused valid declaration is added', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Additional', 'route' => 'home']]);
+
+    expect($content->published('header'))->toHaveCount(1);
+    expect($content->published('header')[0])->toMatchArray(['label' => 'Specimens', 'href' => '/#specimens']);
+});
+
+it('explicitly reconciles additive declarations without publishing drafts and requires a fresh review', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $items = $content->draftItems('header');
+    $items[0]['label'] = 'Private wildlife';
+    $content->saveDraft('header', $items, 1);
+    $review = $content->review('header', 2);
+    $public = $content->published('header');
+    config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Additional', 'route' => 'home']]);
+
+    expect($content->reconcileConfiguredMenu('header', 2))->toBe(3);
+
+    expect($content->published('header'))->toBe($public);
+    expect($content->draftItems('header'))->toBe($items);
+    expect(fn () => $content->publish('header', 2, $review['token']))->toThrow(MenuConflict::class);
+    expect($content->review('header', 3)['publishable'])->toBeTrue();
+    expect($menu->fresh()->adoption_bindings['fixed_links'])->toHaveKey('additional');
+});
+
+it('preflights declaration reconciliation without writing and applies it only explicitly', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $before = $menu->getAttributes();
+    config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Additional', 'route' => 'home']]);
+
+    $this->artisan('phi-cms:menus:adopt', ['key' => 'header', '--reconcile' => true])->assertSuccessful();
+    expect($menu->fresh()->getAttributes())->toBe($before);
+
+    $this->artisan('phi-cms:menus:adopt', ['key' => 'header', '--reconcile' => true, '--apply' => true])->assertSuccessful();
+    expect($menu->fresh()->menu_version)->toBe(2);
+    expect($content->reconcileConfiguredMenu('header', 2))->toBe(2);
+});
+
+it('refuses invalid or rebound declarations and stale reconciliation without changing saved state', function (string $change): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $before = $menu->getAttributes();
+    $rows = $content->inventory('header');
+    Route::get('/other', static fn (): string => 'Other')->name('other');
+    Route::getRoutes()->refreshNameLookups();
+    $version = 1;
+    if ($change === 'invalid addition') {
+        config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Missing', 'route' => 'missing']]);
+    } elseif ($change === 'fixed route rebound') {
+        config(['phi-cms.navigation.fixed_links.home.route' => 'other']);
+    } elseif ($change === 'Page route rebound') {
+        config(['phi-cms.navigation.fixed_pages.home.route' => 'other']);
+    } elseif ($change === 'anchor removed') {
+        config(['phi-cms.navigation.fixed_pages.home.anchors' => []]);
+    } elseif ($change === 'Page identity replaced') {
+        DB::table('pages')->where('id', 1)->update(['slug' => 'old-home']);
+        $replacement = DB::table('pages')->where('id', 1)->first();
+        $replacement->id = 2;
+        $replacement->slug = 'home';
+        DB::table('pages')->insert((array) $replacement);
+        DB::table('page_section')->where('page_id', 1)->update(['page_id' => 2]);
+    } else {
+        config(['phi-cms.navigation.fixed_links.additional' => ['label' => 'Additional', 'route' => 'home']]);
+        $version = 0;
+    }
+
+    expect(fn () => $content->reconcileConfiguredMenu('header', $version))->toThrow(MenuConflict::class);
+
+    expect($menu->fresh()->getAttributes())->toBe($before);
+    expect($content->inventory('header'))->toBe($rows);
+})->with(['invalid addition', 'fixed route rebound', 'Page route rebound', 'anchor removed', 'Page identity replaced', 'stale version']);
+
+it('suppresses only a changed fixed destination without retargeting it or breaking unaffected public links', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    $items = $content->draftItems('header');
+    $items[] = ['item_key' => null, 'label' => 'Home root', 'destination' => ['kind' => 'fixed', 'key' => 'home']];
+    $content->saveDraft('header', $items, 1);
+    $review = $content->review('header', 2);
+    $content->publish('header', 2, $review['token']);
+    Route::get('/other', static fn (): string => 'Other')->name('other');
+    Route::getRoutes()->refreshNameLookups();
+
+    config(['phi-cms.navigation.fixed_links.home.route' => 'other']);
+
+    expect($content->published('header'))->toHaveCount(1);
+    expect($content->published('header')[0])->toMatchArray(['label' => 'Specimens', 'href' => '/#specimens']);
+    expect(fn () => $content->review('header', 3))->toThrow(MenuConflict::class);
+});
+
 it('adopts the declared header as equal draft and public rows without changing legacy menus', function (): void {
     prepareMenuContentTest();
     $legacyMenuId = DB::table('menus')->insertGetId([

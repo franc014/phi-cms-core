@@ -138,13 +138,49 @@ final class MenuContent
         }
     }
 
+    /** Accept validated declaration additions without resetting either editorial stage. */
+    public function reconcileConfiguredMenu(string $key, int $expectedVersion): int
+    {
+        abort_unless(app()->runningInConsole(), 403);
+        $menu = $this->adoptedMenu($key);
+        $bindings = $this->reconciledBindings($menu, $key);
+
+        return $this->transaction(function () use ($key, $menu, $bindings, $expectedVersion): int {
+            $rows = $this->draftRows($menu);
+            $lockRows = array_merge($rows, $this->publicRows($menu));
+            foreach ($bindings['fixed_pages'] as $binding) {
+                foreach (array_merge([null], array_keys($binding['anchors'])) as $anchor) {
+                    $lockRows[] = ['destination' => ['kind' => 'page', 'page_id' => $binding['page_id'], 'anchor' => $anchor]];
+                }
+            }
+            $this->lockReferences($lockRows, $bindings);
+            $fresh = $this->lockMenu($menu, $rows);
+            $this->assertVersion($fresh, $expectedVersion);
+            if ($fresh->adoption_bindings !== $menu->adoption_bindings
+                || $this->reconciledBindings($fresh, $key) !== $bindings) {
+                throw new MenuConflict('Menu declaration bindings changed during reconciliation. Reload and retry.');
+            }
+            if ($fresh->adoption_bindings === $bindings) {
+                return $expectedVersion;
+            }
+
+            DB::table('menus')->where('id', $fresh->getKey())->update([
+                'adoption_bindings' => json_encode($bindings, JSON_THROW_ON_ERROR),
+                'menu_version' => $expectedVersion + 1,
+                'updated_at' => now(),
+            ]);
+            session()->forget($this->reviewKey($fresh));
+
+            return $expectedVersion + 1;
+        });
+    }
+
     /**
      * @return list<array{id: string, label: string, href: string}>
      */
     public function published(string $key): array
     {
         $menu = $this->adoptedMenu($key);
-        $this->assertDeclarationCurrent($menu, $key);
         $resolved = $this->withConsistentReadSnapshot(function () use ($menu, $key): array {
             return $this->resolveRows($menu, $key, $this->publicRows($menu), preview: false);
         });
@@ -535,24 +571,32 @@ final class MenuContent
     }
 
     /** @return array<string, mixed> */
-    public function preflight(string $key): array
+    public function preflight(string $key, bool $reconcile = false): array
     {
         $definition = $this->menuDefinition($key);
         $existing = Menu::query()->where('key', $key)->first();
         if ($existing !== null) {
             $this->assertAdopted($existing, $key);
-            $this->assertDeclarationCurrent($existing, $key);
+            if ($reconcile) {
+                $this->reconciledBindings($existing, $key);
+            } else {
+                $this->assertDeclarationCurrent($existing, $key);
+            }
 
             return [
                 'key' => $key,
                 'label' => $definition['label'],
                 'menu_exists' => true,
                 'existing_menu_id' => $existing->getKey(),
+                'version' => (int) $existing->menu_version,
                 'item_count' => count($this->publicRows($existing)),
                 'publishable' => true,
                 'items' => [],
                 'feedback' => [],
             ];
+        }
+        if ($reconcile) {
+            throw new MenuConflict("Menu [{$key}] must exist before declaration reconciliation.");
         }
         $bindings = $this->resolveBindings($key);
         $configuredRows = $definition['adoption_items'] ?? null;
@@ -648,6 +692,33 @@ final class MenuContent
         if (! is_string($stored) || ! hash_equals($stored, $this->declarationFingerprint($key))) {
             throw new MenuConflict("The developer declaration for menu [{$key}] changed. Reconcile its fixed route and anchor bindings before continuing.");
         }
+    }
+
+    /** @return array<string, mixed> */
+    private function reconciledBindings(Menu $menu, string $key): array
+    {
+        $bindings = $this->resolveBindings($key);
+        foreach ($menu->adoption_bindings['fixed_links'] ?? [] as $linkKey => $binding) {
+            if (($bindings['fixed_links'][$linkKey] ?? null) !== $binding) {
+                throw new MenuConflict("Fixed route [{$linkKey}] cannot be removed or rebound by declaration reconciliation.");
+            }
+        }
+        foreach ($menu->adoption_bindings['fixed_pages'] ?? [] as $pageKey => $binding) {
+            $candidate = $bindings['fixed_pages'][$pageKey] ?? null;
+            $anchors = $binding['anchors'];
+            unset($binding['anchors']);
+            if (! is_array($candidate) || array_diff_assoc($binding, $candidate) !== []) {
+                throw new MenuConflict("Fixed Page [{$pageKey}] cannot be removed or rebound by declaration reconciliation.");
+            }
+            foreach ($anchors as $anchor => $anchorBinding) {
+                if (($candidate['anchors'][$anchor] ?? null) !== $anchorBinding) {
+                    throw new MenuConflict("Anchor [{$pageKey}.{$anchor}] cannot be removed or rebound by declaration reconciliation.");
+                }
+            }
+        }
+        $bindings['declaration_fingerprint'] = $this->declarationFingerprint($key);
+
+        return $bindings;
     }
 
     /** @return array<string, mixed> */
@@ -987,7 +1058,11 @@ final class MenuContent
         }
         $fixedPage = $this->fixedPageBinding($menu, $page->getKey());
         if ($fixedPage !== null) {
-            if (! Route::has($fixedPage['route'])) {
+            $declaration = config("phi-cms.navigation.fixed_pages.{$fixedPage['key']}");
+            if (! is_array($declaration)
+                || ($declaration['route'] ?? null) !== $fixedPage['route']
+                || ($declaration['page_slug'] ?? null) !== $fixedPage['page_slug']
+                || ! Route::has($fixedPage['route'])) {
                 return null;
             }
 
@@ -1161,10 +1236,17 @@ final class MenuContent
         }
         if ($kind === 'fixed' && is_string($destination['key'] ?? null)) {
             $fixed = config("phi-cms.navigation.fixed_links.{$destination['key']}");
-            if (! is_array($fixed) || ! is_string($fixed['route'] ?? null) || ! Route::has($fixed['route'])) {
+            $binding = $menu->adoption_bindings['fixed_links'][$destination['key']] ?? null;
+            if (! is_array($fixed) || ! is_string($fixed['route'] ?? null)
+                || ($binding['route'] ?? null) !== $fixed['route'] || ! Route::has($fixed['route'])) {
                 return $this->unavailable('The declared host route is unavailable.', ['kind' => 'fixed', 'key' => $destination['key']]);
             }
-            $href = route($fixed['route'], [], false);
+
+            try {
+                $href = route($fixed['route'], [], false);
+            } catch (\Throwable) {
+                return $this->unavailable('The declared host route is unavailable.', ['kind' => 'fixed', 'key' => $destination['key']]);
+            }
 
             return ['href' => $href, 'status' => 'available', 'message' => null, 'title' => $fixed['label'] ?? null, 'fingerprint' => ['kind' => 'fixed', 'key' => $destination['key'], 'route' => $fixed['route'], 'href' => $href]];
         }
