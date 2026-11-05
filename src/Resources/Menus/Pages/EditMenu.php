@@ -11,6 +11,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
@@ -37,6 +38,9 @@ class EditMenu extends EditRecord
     /** @var array<string, mixed>|null */
     #[Locked]
     public ?array $publicationReview = null;
+
+    #[Locked]
+    public bool $menuConflict = false;
 
     public function mount(int | string $record): void
     {
@@ -78,11 +82,17 @@ class EditMenu extends EditRecord
                     ->modalSubmitActionLabel('Save draft')
                     ->visible(fn (): bool => $this->mayUpdateMenu())
                     ->action(function (array $data) use ($key): void {
-                        $this->saveMenuDraft($key, $data);
+                        $this->handleMenuConflict(fn () => $this->saveMenuDraft($key, $data));
                     }),
                 Action::make('previewMenuDraft')
                     ->label('Preview saved draft')
                     ->icon(Heroicon::OutlinedEye)
+                    ->url(function () use ($key): ?string {
+                        $route = config("phi-cms.navigation.menus.{$key}.preview_route");
+
+                        return is_string($route) && Route::has($route) ? route($route) : null;
+                    })
+                    ->openUrlInNewTab()
                     ->modalContent(fn () => view('phi-cms-core::resources.menus.preview', [
                         'preview' => app(MenuContent::class)->preview($key),
                     ]))
@@ -93,7 +103,7 @@ class EditMenu extends EditRecord
                     ->icon(Heroicon::OutlinedClipboardDocumentCheck)
                     ->visible(fn (): bool => $this->mayPublishMenu())
                     ->action(function () use ($key): void {
-                        $review = app(MenuContent::class)->review($key, $this->menuVersion);
+                        $review = $this->handleMenuConflict(fn (): array => app(MenuContent::class)->review($key, $this->menuVersion));
                         $this->reviewToken = $review['token'];
                         $this->reviewVersion = $review['version'];
                         $this->publicationReview = $review;
@@ -116,7 +126,19 @@ class EditMenu extends EditRecord
                     ->visible(fn (): bool => $this->mayPublishMenu() && $this->reviewToken !== null && $this->publicationReview !== null)
                     ->disabled(fn (): bool => ($this->publicationReview['publishable'] ?? false) !== true)
                     ->action(function () use ($key): void {
-                        $this->publishReviewedMenu($key);
+                        $this->handleMenuConflict(fn () => $this->publishReviewedMenu($key));
+                    }),
+                Action::make('reloadMenu')
+                    ->label('Reload saved menu')
+                    ->requiresConfirmation()
+                    ->modalDescription('Discard local changes and load the latest saved menu. You must review it again before publishing.')
+                    ->visible(fn (): bool => $this->menuConflict)
+                    ->action(function (): void {
+                        $this->authorizeAccess();
+                        $this->record = $this->getRecord()->fresh();
+                        $this->menuVersion = (int) $this->getRecord()->menu_version;
+                        $this->clearPublicationReview();
+                        $this->menuConflict = false;
                     }),
             ];
         }
@@ -232,9 +254,7 @@ class EditMenu extends EditRecord
         }
 
         $this->menuVersion = app(MenuContent::class)->saveDraft($key, $rows, $this->menuVersion);
-        $this->reviewToken = null;
-        $this->reviewVersion = null;
-        $this->publicationReview = null;
+        $this->clearPublicationReview();
         Notification::make()->title('Menu draft saved')->success()->send();
     }
 
@@ -245,9 +265,7 @@ class EditMenu extends EditRecord
         }
 
         $this->menuVersion = app(MenuContent::class)->publish($key, $this->reviewVersion, $this->reviewToken);
-        $this->reviewToken = null;
-        $this->reviewVersion = null;
-        $this->publicationReview = null;
+        $this->clearPublicationReview();
         $this->record = $this->getRecord()->fresh();
         Notification::make()->title('Menu published')->success()->send();
     }
@@ -258,6 +276,31 @@ class EditMenu extends EditRecord
         $menu = $this->getRecord()->fresh();
 
         return $actor !== null && $actor->can('update', $menu);
+    }
+
+    private function handleMenuConflict(\Closure $operation): mixed
+    {
+        try {
+            return $operation();
+        } catch (MenuConflict) {
+            $this->menuConflict = true;
+            $this->clearPublicationReview();
+            Notification::make()
+                ->title('Menu changed elsewhere')
+                ->body('Your input has been retained. Copy any changes you want to keep, close this dialog, then choose Reload saved menu and review again. Nothing was overwritten.')
+                ->warning()
+                ->persistent()
+                ->send();
+
+            throw new Halt;
+        }
+    }
+
+    private function clearPublicationReview(): void
+    {
+        $this->reviewToken = null;
+        $this->reviewVersion = null;
+        $this->publicationReview = null;
     }
 
     private function mayPreviewMenu(): bool

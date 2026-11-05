@@ -534,3 +534,78 @@ it('preserves the underlying cause of a menu conflict', function (): void {
 
     expect($conflict->getPrevious())->toBe($previous);
 });
+
+it('rejects an active adopted anchor without published content throughout the menu workflow', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    $review = $content->review('header', 1);
+
+    DB::table('sections')->where('id', 1)->update(['content_version' => 1]);
+
+    expect($content->review('header', 1)['publishable'])->toBeFalse()
+        ->and($content->published('header'))->toBe([])
+        ->and($content->anchorChoices('header', 1))->toBe([])
+        ->and(fn () => $content->publish('header', 1, $review['token']))->toThrow(MenuConflict::class);
+});
+
+it('refuses preflight for a declared adopted anchor with no public content', function (): void {
+    prepareMenuContentTest();
+    DB::table('sections')->where('id', 1)->update(['content_version' => 1]);
+
+    expect(fn () => app(MenuContent::class)->preflight('header'))->toThrow(MenuConflict::class);
+});
+
+it('labels draft Page choices as unpublished in searches and selected values', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    DB::table('pages')->where('id', 1)->update([
+        'status' => PageStatus::DRAFT->value,
+        'draft_fields' => json_encode(['title' => 'Unpublished Home', 'slug' => 'new-home'], JSON_THROW_ON_ERROR),
+    ]);
+
+    expect($content->pageChoice('header', 1)['label'])->toContain('Not published');
+    foreach ($content->destinationChoices('header', 'Home') as $choice) {
+        if (($choice['destination']['kind'] ?? null) === 'page') {
+            expect($choice['label'])->toContain('Not published');
+        }
+    }
+});
+
+it('compares publication additions removals and label order and destination changes by item identity', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    $original = $content->draftItems('header')[0];
+    $content->saveDraft('header', [$original, ['label' => 'Contact', 'destination' => ['kind' => 'custom', 'url' => '/contact']]], 1);
+    $review = $content->review('header', 2);
+    $content->publish('header', 2, $review['token']);
+    $content->saveDraft('header', [
+        ['label' => 'New link', 'destination' => ['kind' => 'custom', 'url' => '/new']],
+        ['item_key' => $original['item_key'], 'label' => 'Wildlife', 'destination' => ['kind' => 'custom', 'url' => '/wildlife']],
+    ], 3);
+
+    $review = $content->review('header', 4);
+
+    expect(array_column($review['changes'], 'type'))->toBe(['added', 'changed', 'removed'])
+        ->and($review['changes'][1]['fields'])->toBe(['label', 'destination', 'order_column', 'href'])
+        ->and($review['changes'][1]['before']['label'])->toBe('Specimens')
+        ->and($review['changes'][1]['after']['label'])->toBe('Wildlife')
+        ->and($review['changes'][2]['before']['label'])->toBe('Contact')
+        ->and($review['changes'][2]['after'])->toBeNull();
+});
+
+it('identifies unchanged publication rows and keeps preview route configuration outside destination bindings', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    config(['phi-cms.navigation.menus.header.preview_route' => 'home']);
+
+    $review = $content->review('header', 1);
+
+    expect($review['changes'])->toHaveCount(1)
+        ->and($review['changes'][0]['type'])->toBe('unchanged')
+        ->and($review['changes'][0]['fields'])->toBe([])
+        ->and($review['changes'][0]['before'])->toBe($review['changes'][0]['after']);
+});

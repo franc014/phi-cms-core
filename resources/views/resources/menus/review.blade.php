@@ -1,8 +1,36 @@
 @if (is_array($review))
     <div class="space-y-4">
         <p class="text-sm text-gray-600 dark:text-gray-300">
-            Review the resolved public destinations below. Publishing changes only this menu.
+            Compare the published menu with the saved draft below. Publishing changes only this menu.
         </p>
+
+        <h3>Published → Saved draft</h3>
+        <ol>
+            @foreach ($review['changes'] as $change)
+                <li wire:key="menu-change-{{ $change['after']['id'] ?? $change['before']['id'] }}">
+                    <strong>{{ ucfirst($change['type']) }}</strong>
+                    @if ($change['fields'] !== [])
+                        <span>({{ implode(', ', $change['fields']) }})</span>
+                    @endif
+                    <p>Published:
+                        @if ($change['before'] !== null)
+                            #{{ $change['before']['order_column'] }} {{ $change['before']['label'] }} — {{ $change['before']['href'] ?? 'Unavailable' }}
+                            ({{ json_encode($change['before']['destination'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }})
+                        @else
+                            Not in published menu
+                        @endif
+                    </p>
+                    <p>Saved draft:
+                        @if ($change['after'] !== null)
+                            #{{ $change['after']['order_column'] }} {{ $change['after']['label'] }} — {{ $change['after']['href'] ?? 'Unavailable' }}
+                            ({{ json_encode($change['after']['destination'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }})
+                        @else
+                            Removed from menu
+                        @endif
+                    </p>
+                </li>
+            @endforeach
+        </ol>
 
         <ol class="space-y-2">
             @forelse ($review['items'] as $item)

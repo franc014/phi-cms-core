@@ -428,7 +428,7 @@ final class MenuContent
             }
             $choices[] = [
                 'destination' => ['kind' => 'page', 'page_id' => (int) $page->getKey(), 'anchor' => null],
-                'label' => $page->title . ' — ' . ($resolution['href'] ?? $resolution['proposed_path'] ?? 'Not published'),
+                'label' => $this->pageChoiceLabel($resolution),
                 'status' => $resolution['status'],
                 'href' => $resolution['href'],
             ];
@@ -459,7 +459,7 @@ final class MenuContent
 
         return [
             'destination' => ['kind' => 'page', 'page_id' => $pageId, 'anchor' => null],
-            'label' => $page->title . ' — ' . ($resolution['href'] ?? $resolution['proposed_path'] ?? 'Not published'),
+            'label' => $this->pageChoiceLabel($resolution),
             'status' => $resolution['status'],
             'href' => $resolution['href'],
         ];
@@ -694,6 +694,9 @@ final class MenuContent
         if ($section->status !== SectionStatus::ACTIVE) {
             throw new MenuConflict("Anchor [{$anchor}] is not on an active Section.");
         }
+        if ($section->content_version !== null && $section->published_content === null) {
+            throw new MenuConflict("Anchor [{$anchor}] has no published Section content.");
+        }
         $assignment = DB::table('page_section')
             ->where('page_id', $page->getKey())
             ->where('section_id', $section->getKey())
@@ -713,6 +716,7 @@ final class MenuContent
     private function declarationFingerprint(string $key): string
     {
         $menu = $this->menuDefinition($key);
+        unset($menu['preview_route']);
         $navigation = config('phi-cms.navigation', []);
         $declaration = [
             'menu' => $menu,
@@ -991,7 +995,8 @@ final class MenuContent
         }
         $sectionId = (int) $anchorBinding['section_id'];
         $section = $snapshot['sections'][$sectionId] ?? Section::query()->find($sectionId);
-        if ($section === null || $section->slug !== $anchorBinding['section_slug'] || $section->status !== SectionStatus::ACTIVE) {
+        if ($section === null || $section->slug !== $anchorBinding['section_slug'] || $section->status !== SectionStatus::ACTIVE
+            || ($section->content_version !== null && $section->published_content === null)) {
             return ['available' => false, 'section_id' => $sectionId, 'message' => 'The anchor Section is unavailable.'];
         }
         $membershipKey = $page->getKey() . '|' . $section->getKey();
@@ -1015,6 +1020,15 @@ final class MenuContent
         return null;
     }
 
+    /** @param array<string, mixed> $resolution */
+    private function pageChoiceLabel(array $resolution): string
+    {
+        $path = $resolution['href'] ?? $resolution['proposed_path'] ?? null;
+
+        return ($resolution['title'] ?? 'Page') . ' — '
+            . ($resolution['status'] === 'draft' ? 'Not published' . ($path !== null ? ' — ' . $path : '') : ($path ?? 'Unavailable'));
+    }
+
     /** @return list<array<string, mixed>> */
     private function fixedRouteChoices(string $menuKey, Authenticatable $actor): array
     {
@@ -1029,7 +1043,7 @@ final class MenuContent
             if ($resolution['status'] !== 'unavailable') {
                 $choices[] = [
                     'destination' => ['kind' => 'page', 'page_id' => (int) $page->getKey(), 'anchor' => null],
-                    'label' => $page->title . ' — ' . ($resolution['href'] ?? 'Not published'),
+                    'label' => $this->pageChoiceLabel($resolution),
                     'status' => $resolution['status'],
                     'href' => $resolution['href'],
                 ];
@@ -1201,6 +1215,10 @@ final class MenuContent
     {
         $resolved = $this->resolveRows($menu, $key, $rows, preview: true, actor: $actor);
         $items = array_map(fn (array $row): array => $this->previewRow($row) + ['order_column' => $row['order_column']], $resolved);
+        $published = array_map(
+            fn (array $row): array => $this->previewRow($row) + ['order_column' => $row['order_column']],
+            $this->resolveRows($menu, $key, $this->publicRows($menu), preview: false)
+        );
         $publishable = collect($resolved)->every(fn (array $row): bool => in_array($row['resolution']['status'], ['available', 'untracked'], true));
         $fingerprint = hash('sha256', json_encode([
             'menu_id' => $menu->getKey(),
@@ -1217,6 +1235,7 @@ final class MenuContent
 
         return [
             'items' => $items,
+            'changes' => $this->publicationChanges($published, $items),
             'publishable' => $publishable,
             'feedback' => array_values(array_filter(array_map(
                 fn (array $row): ?array => in_array($row['resolution']['status'], ['draft', 'unavailable'], true)
@@ -1226,6 +1245,31 @@ final class MenuContent
             ))),
             'fingerprint' => $fingerprint,
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $published
+     * @param  list<array<string, mixed>>  $draft
+     * @return list<array{type: string, fields: list<string>, before: array<string, mixed>|null, after: array<string, mixed>|null}>
+     */
+    private function publicationChanges(array $published, array $draft): array
+    {
+        $remaining = array_column($published, null, 'item_key');
+        $changes = [];
+        foreach ($draft as $item) {
+            $before = $remaining[$item['item_key']] ?? null;
+            unset($remaining[$item['item_key']]);
+            $fields = $before === null ? [] : array_values(array_filter(
+                ['label', 'destination', 'order_column', 'href'],
+                static fn (string $field): bool => $before[$field] !== $item[$field],
+            ));
+            $changes[] = ['type' => $before === null ? 'added' : ($fields === [] ? 'unchanged' : 'changed'), 'fields' => $fields, 'before' => $before, 'after' => $item];
+        }
+        foreach ($remaining as $item) {
+            $changes[] = ['type' => 'removed', 'fields' => [], 'before' => $item, 'after' => null];
+        }
+
+        return $changes;
     }
 
     private function currentPublicSlug(Page $page, array $snapshot = []): string

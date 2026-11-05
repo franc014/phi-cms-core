@@ -39,6 +39,10 @@ php artisan phi-cms:menus:adopt header --apply
 
 The editorial lifecycle is **save draft → review → publish**. Drafts never change the published list. Versions, actor-bound review tokens and destination fingerprints reject stale saves or reviews without partial publication. Page destinations are rechecked on private reads and inside the save/review/publish transactions. Public resolution omits unavailable destinations; authorized previews retain feedback and never turn an unavailable destination into a link.
 
+The native publication review compares published and saved-draft items by stable identity, including additions, removals, labels, order and destinations. Draft-only Page options are marked **Not published**. An adopted anchor Section requires published content; the existing unadopted Home path remains supported. If another editor changes the menu, the native editor retains local input and offers **Reload saved menu** after you copy any changes you want to keep and close the dialog. Reloading invalidates the old review.
+
+To open a host's authorized full-page preview instead of the default preview dialog, set `phi-cms.navigation.menus.<key>.preview_route` to its registered route name. This display-only setting does not invalidate stored menu bindings. The host route must enforce preview and draft permissions and private, non-cacheable responses.
+
 Menu and Page authority is independent. Hosts must grant the menu abilities required by the operation (`update`, `preview`, `viewDraft`, `publish`) and Page target abilities (`viewAny`, `view`, `useInMenu`, plus `preview` and `viewDraft` for a draft Page). `EditFrontendContent` is not an implicit substitute for these grants. Custom destinations accept only safe HTTP(S) URLs or site-root paths and remain explicitly untracked.
 
 ## Requirements
