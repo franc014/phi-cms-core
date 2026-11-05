@@ -15,6 +15,7 @@ use JFA\PhiCmsCore\Menus\MenuConflict;
 use JFA\PhiCmsCore\Menus\MenuContent;
 use JFA\PhiCmsCore\Models\Menu;
 use JFA\PhiCmsCore\Models\MenuItem;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 function prepareMenuContentTest(): void
 {
@@ -608,4 +609,22 @@ it('identifies unchanged publication rows and keeps preview route configuration 
         ->and($review['changes'][0]['type'])->toBe('unchanged')
         ->and($review['changes'][0]['fields'])->toBe([])
         ->and($review['changes'][0]['before'])->toBe($review['changes'][0]['after']);
+});
+
+it('allows a fresh unavailable Page review but never reuses resolved values after the Page is removed', function (): void {
+    prepareMenuContentTest();
+    $content = app(MenuContent::class);
+    $content->adoptConfiguredMenu('header');
+    $oldReview = $content->review('header', 1);
+    DB::table('pages')->where('id', 1)->delete();
+
+    expect(fn () => $content->authorizeRetainedReview('header', $oldReview))
+        ->toThrow(HttpException::class);
+
+    $review = $content->review('header', 1);
+    $content->authorizeRetainedReview('header', $review);
+
+    expect($review['publishable'])->toBeFalse()
+        ->and($review['items'][0]['target_label'])->toBeNull()
+        ->and($review['items'][0]['message'])->toBe('The referenced Page has been removed.');
 });

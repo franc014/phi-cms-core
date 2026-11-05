@@ -324,6 +324,46 @@ final class MenuContent
         });
     }
 
+    /** @param array<string, mixed> $review */
+    public function authorizeRetainedReview(string $key, array $review): void
+    {
+        $menu = $this->adoptedMenu($key);
+        $actor = $this->authorizeMenu('publish', $menu);
+        $this->authorizeMenu('viewDraft', $menu, $actor);
+        $this->markPrivateResponse();
+        $targets = [];
+        $items = $review['items'] ?? [];
+        foreach ($review['changes'] ?? [] as $change) {
+            foreach (['before', 'after'] as $stage) {
+                if (is_array($change[$stage] ?? null)) {
+                    $items[] = $change[$stage];
+                }
+            }
+        }
+        foreach ($items as $item) {
+            if (($item['destination']['kind'] ?? null) === 'page') {
+                $pageId = (int) $item['destination']['page_id'];
+                $targets[$pageId] = [
+                    'draft' => ($targets[$pageId]['draft'] ?? false) || ($item['status'] ?? null) === 'draft',
+                    'requires_page' => ($targets[$pageId]['requires_page'] ?? false)
+                        || ($item['status'] ?? null) !== 'unavailable'
+                        || ($item['target_label'] ?? null) !== null
+                        || ($item['proposed_path'] ?? null) !== null,
+                ];
+            }
+        }
+        $pages = Page::query()->whereIn('id', array_keys($targets))->get()->keyBy('id');
+        foreach ($targets as $pageId => $target) {
+            $page = $pages->get($pageId);
+            if ($page === null) {
+                abort_if($target['requires_page'], 403);
+
+                continue;
+            }
+            $this->authorizePageTarget($actor, $page, $target['draft'] || $page->status !== PageStatus::PUBLISHED);
+        }
+    }
+
     public function publish(string $key, int $expectedVersion, string $reviewToken): int
     {
         abort_unless(config('phi-cms.editing', false), 403);

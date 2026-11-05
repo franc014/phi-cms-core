@@ -58,10 +58,24 @@ class EditMenu extends EditRecord
             abort_unless($gate->allows('viewDraft', $record)
                 && ($gate->allows('update', $record) || $gate->allows('publish', $record)), 403);
 
+            if ($this->publicationReview !== null) {
+                app(MenuContent::class)->authorizeRetainedReview((string) $record->key, $this->publicationReview);
+            }
+
             return;
         }
 
         parent::authorizeAccess();
+    }
+
+    public function rendering(): void
+    {
+        $this->authorizeAccess();
+    }
+
+    public function dehydrate(): void
+    {
+        $this->authorizeAccess();
     }
 
     protected function getFormActions(): array
@@ -114,6 +128,14 @@ class EditMenu extends EditRecord
                             ->warning(! $review['publishable'])
                             ->send();
                     }),
+                Action::make('inspectMenuReview')
+                    ->label('View publication review')
+                    ->modalHeading('Saved menu publication review')
+                    ->modalContent(fn () => view('phi-cms-core::resources.menus.review', [
+                        'review' => $this->publicationReviewForDisplay(),
+                    ]))
+                    ->modalSubmitAction(false)
+                    ->visible(fn (): bool => $this->mayPublishMenu() && $this->publicationReview !== null),
                 Action::make('publishMenu')
                     ->label('Publish menu')
                     ->color('success')
@@ -121,7 +143,7 @@ class EditMenu extends EditRecord
                     ->modalHeading('Publish reviewed menu')
                     ->modalSubmitActionLabel('Publish menu')
                     ->modalContent(fn () => view('phi-cms-core::resources.menus.review', [
-                        'review' => $this->publicationReview,
+                        'review' => $this->publicationReviewForDisplay(),
                     ]))
                     ->visible(fn (): bool => $this->mayPublishMenu() && $this->reviewToken !== null && $this->publicationReview !== null)
                     ->disabled(fn (): bool => ($this->publicationReview['publishable'] ?? false) !== true)
@@ -294,6 +316,14 @@ class EditMenu extends EditRecord
 
             throw new Halt;
         }
+    }
+
+    /** @return array<string, mixed>|null */
+    private function publicationReviewForDisplay(): ?array
+    {
+        $this->authorizeAccess();
+
+        return $this->publicationReview;
     }
 
     private function clearPublicationReview(): void
