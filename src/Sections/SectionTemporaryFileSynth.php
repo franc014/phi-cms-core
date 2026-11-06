@@ -2,6 +2,7 @@
 
 namespace JFA\PhiCmsCore\Sections;
 
+use JFA\PhiCmsCore\Pages\PageTemporaryUploads;
 use Livewire\Features\SupportFileUploads\FileUploadSynth;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
@@ -26,7 +27,17 @@ final class SectionTemporaryFileSynth extends FileUploadSynth
     {
         foreach (is_array($value) ? $value : [$value] as $file) {
             if ($file instanceof TemporaryUploadedFile && str_starts_with($file->getFilename(), 'phi-')) {
-                app(SectionTemporaryUploads::class)->file($file->getFilename(), false, $this->context->component->getId());
+                $filename = $file->getFilename();
+                $editor = $this->context->component->getId();
+                $pageUploads = app(PageTemporaryUploads::class);
+
+                if ($pageUploads->hasFile($filename)) {
+                    $pageUploads->file($filename, false, $editor);
+
+                    continue;
+                }
+
+                app(SectionTemporaryUploads::class)->file($filename, false, $editor);
             }
         }
     }

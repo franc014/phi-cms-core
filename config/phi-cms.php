@@ -11,4 +11,8 @@ return [
         'max_kilobytes' => 3 * 1024,
         'max_dimension' => 8192,
     ],
+    'page_seo_images' => [
+        'collection' => 'phi-page-seo-images',
+        'disk' => 'phi-cms-images',
+    ],
 ];

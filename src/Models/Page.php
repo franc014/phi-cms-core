@@ -15,15 +15,19 @@ use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\PageStatus;
 use JFA\PhiCmsCore\Pages\PageMutation;
 use JFA\PhiCmsCore\Sections\SectionConflict;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 /**
  * @property PageStatus $status
  * @property Carbon|null $published_at
  * @property int|null $page_version
  */
-class Page extends Model
+class Page extends Model implements HasMedia
 {
     use HasFactory;
+    use InteractsWithMedia;
 
     protected $fillable = [
         'title',
@@ -63,6 +67,22 @@ class Page extends Model
         }
 
         return $this->withSectionLocks(fn (): ?bool => parent::delete());
+    }
+
+    public function registerMediaCollections(): void
+    {
+        $this->addMediaCollection((string) config('phi-cms.page_seo_images.collection', 'phi-page-seo-images'))
+            ->useDisk((string) config('phi-cms.page_seo_images.disk', config('phi-cms.images.disk', 'phi-cms-images')));
+    }
+
+    public function registerMediaConversions(?Media $media = null): void
+    {
+        // Page SEO originals are immutable and are never transformed after upload.
+    }
+
+    public function registerAllMediaConversions(?Media $media = null): void
+    {
+        $this->registerMediaCollections();
     }
 
     private function withSectionLocks(\Closure $operation): mixed

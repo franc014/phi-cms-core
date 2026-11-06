@@ -5,6 +5,8 @@ namespace JFA\PhiCmsCore\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Pages\PageSeoImages;
+use JFA\PhiCmsCore\Pages\PageTemporaryUploads;
 use JFA\PhiCmsCore\Sections\SectionImages;
 use JFA\PhiCmsCore\Sections\SectionTemporaryUploads;
 use Livewire\Features\SupportFileUploads\FileUploadConfiguration;
@@ -14,12 +16,13 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 final class SectionTemporaryUploadController
 {
     /** @return array{paths: list<string>}|JsonResponse */
-    public function __invoke(string $ticket, SectionTemporaryUploads $uploads): array | JsonResponse
+    public function __invoke(string $ticket, SectionTemporaryUploads $uploads, PageTemporaryUploads $pageUploads): array | JsonResponse
     {
         try {
             abort_unless(request()->hasValidRelativeSignature(), 401);
-            $binding = $uploads->ticket($ticket);
-            $uploads->assertPrivateStorage();
+            $isPageUpload = $pageUploads->hasTicket($ticket);
+            $binding = $isPageUpload ? $pageUploads->ticket($ticket) : $uploads->ticket($ticket);
+            $isPageUpload ? $pageUploads->assertPrivateStorage() : $uploads->assertPrivateStorage();
             abort_if(FileUploadConfiguration::isUsingS3() || FileUploadConfiguration::isUsingGCS(), 403);
 
             // FilePond does not request JSON and the host may force HTML error
@@ -37,9 +40,17 @@ final class SectionTemporaryUploadController
             $storage = FileUploadConfiguration::storage();
             $paths = [];
             foreach (request()->file('files') as $file) {
-                app(SectionImages::class)->validateFile($file->getRealPath());
+                if ($isPageUpload) {
+                    app(PageSeoImages::class)->validateFile($file->getRealPath());
+                } else {
+                    app(SectionImages::class)->validateFile($file->getRealPath());
+                }
                 $filename = 'phi-' . $ticket . '-' . TemporaryUploadedFile::generateHashName($file);
-                $uploads->register($filename, $binding);
+                if ($isPageUpload) {
+                    $pageUploads->register($filename, $binding);
+                } else {
+                    $uploads->register($filename, $binding);
+                }
                 $path = FileUploadConfiguration::path($filename);
                 abort_unless($storage->put($path, $file->getContent(), 'private'), 503);
                 abort_unless($storage->put($path . '.json', json_encode(['name' => 'image', 'type' => $file->getMimeType(), 'size' => $file->getSize()], JSON_THROW_ON_ERROR), 'private'), 503);

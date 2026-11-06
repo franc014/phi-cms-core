@@ -2,6 +2,7 @@
 
 namespace JFA\PhiCmsCore\Models;
 
+use JFA\PhiCmsCore\Pages\PageSeoMediaGuard;
 use JFA\PhiCmsCore\Sections\LegacySectionGuard;
 use Spatie\MediaLibrary\MediaCollections\Models\Media as SpatieMedia;
 
@@ -14,6 +15,7 @@ class Media extends SpatieMedia
     public function save(array $options = []): bool
     {
         LegacySectionGuard::media($this);
+        PageSeoMediaGuard::media($this);
 
         return parent::save($options);
     }
@@ -21,6 +23,7 @@ class Media extends SpatieMedia
     public function delete(): ?bool
     {
         LegacySectionGuard::media($this);
+        PageSeoMediaGuard::media($this);
 
         return parent::delete();
     }

@@ -25,6 +25,14 @@ Active does not mean published: new/copied Sections explicitly show **Unpublishe
 
 Normal Page deletion is authorized, version-checked and atomic, requires no export storage, and retains independent Sections/files. Explicit Section deletion still refuses actual draft/public references and protected owned media; snapshots or historical recovery files alone are not a deletion blocker. Private immutable media, conservative current-usage checks and tombstoned retryable physical cleanup remain mandatory. Transaction rollback on failed writes remains unchanged; it is not legacy downgrade support. See `docs/company-page-workflow.md` in the demo for workflow and verification guidance. Arbitrary native field normalization, Gallery/media copy and Chocotour arbitrary Page routing remain outside this slice.
 
+## Page-owned OG/Twitter images
+
+Adopted Pages may expose two optional native image fields, `og_image` and `twitter_image`, through the Page preview workspace. Configure `phi-cms.page_seo_images.disk` and `livewire.temporary_file_upload.disk` as the same private, non-served local disk outside the public root; the host must also register the corresponding preview and public head views. Uploads are immutable Page-owned Media records. New selections are stored as `media:<uuid>` references, while existing legacy strings remain byte-for-byte references and continue to resolve through the host's existing `asset('storage/' . $value)` head behavior.
+
+The fields are independent. Clearing one writes `null` and never falls back to the other. The **Use OG image for Twitter** control is a one-time explicit copy of the same Page reference; later replacements or clears do not couple the fields. Draft selections are available only to a freshly authorized Page preview, and a reference becomes public only when its reviewed Page publication marks its first-publication timestamp. Public delivery is immutable and derived at render time; URL maps are never persisted.
+
+Do not delete Page SEO Media through Spatie or the model directly. A Page with owned SEO Media cannot be deleted until an operator unpublishes the Page, confirms the media has no draft or published references, and runs `PageSeoImages::delete()` in an independent committed transaction. Cleanup tombstones the row before deleting and verifying the private original; failures retain the tombstone for operator retry. There is no automatic orphan collector, cross-Page picker, or disposal of retained published bytes.
+
 ## Flat developer-declared menus
 
 Hosts may register a flat menu under `phi-cms.navigation.menus` and declare its fixed Page anchors and parameter-free host routes under `fixed_pages` and `fixed_links`. Menu adoption is explicit and never repurposes or rewrites a legacy menu:

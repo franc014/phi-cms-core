@@ -21,6 +21,9 @@ use JFA\PhiCmsCore\Livewire\Preview;
 use JFA\PhiCmsCore\Menus\MenuContent;
 use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Pages\PageRegistry;
+use JFA\PhiCmsCore\Pages\PageSeoImageContext;
+use JFA\PhiCmsCore\Pages\PageSeoImages;
+use JFA\PhiCmsCore\Pages\PageTemporaryUploads;
 use JFA\PhiCmsCore\Schema\FieldFactory;
 use JFA\PhiCmsCore\Schema\Handlers\PostsChooserFieldHandler;
 use JFA\PhiCmsCore\Schema\SchemaFieldRenderer;
@@ -140,6 +143,8 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
         $this->app->scoped(SectionRenderer::class);
         $this->app->scoped(SectionImageContext::class);
         $this->app->singleton(SectionImages::class);
+        $this->app->scoped(PageSeoImageContext::class);
+        $this->app->singleton(PageSeoImages::class);
         $this->app->singleton(SectionRegistry::class, fn () => new SectionRegistry(config('phi-cms.sections', [])));
         $this->app->singleton(PageRegistry::class, fn (): PageRegistry => new PageRegistry(
             config('phi-cms.pages', []),
@@ -199,7 +204,12 @@ class PhiCmsCoreServiceProvider extends PackageServiceProvider
                 $filename = TemporaryUploadedFile::extractPathFromSignedPath($value);
                 $filename = $filename === false ? $value : $filename;
                 if (str_starts_with($filename, 'phi-')) {
-                    app(SectionTemporaryUploads::class)->file($filename, true, $component->getId(), $params[0] ?? null);
+                    $field = $params[0] ?? null;
+                    if (is_string($field) && str_starts_with($field, 'pageSeoImages.')) {
+                        app(PageTemporaryUploads::class)->file($filename, true, $component->getId(), $field);
+                    } else {
+                        app(SectionTemporaryUploads::class)->file($filename, true, $component->getId(), $field);
+                    }
                 }
             }
         });

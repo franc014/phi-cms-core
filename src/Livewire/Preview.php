@@ -12,10 +12,13 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\SectionStatus;
 use JFA\PhiCmsCore\Forms\Components\Image;
+use JFA\PhiCmsCore\Forms\Components\PageSeoImage;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Pages\PageConflict;
 use JFA\PhiCmsCore\Pages\PageContent;
+use JFA\PhiCmsCore\Pages\PageSeoImageContext;
+use JFA\PhiCmsCore\Pages\PageTemporaryUploads;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
 use JFA\PhiCmsCore\Resources\Pages\Pages\ManagePageSections;
 use JFA\PhiCmsCore\Sections\SectionConflict;
@@ -39,13 +42,21 @@ class Preview extends FormsComponent
     #[Locked]
     public ?string $uploadContext = null;
 
+    #[Locked]
+    public ?string $pageUploadContext = null;
+
     #[Renderless]
     public function _startUpload(mixed $name, mixed $fileInfo, mixed $isMultiple): void
     {
         abort_unless(is_string($name) && $isMultiple === false, 403);
         $this->authorizeImageField($name);
-        abort_if($this->uploadContext === null, 403);
-        $ticket = app(SectionTemporaryUploads::class)->issue($this->getId(), $this->uploadContext, $name);
+        if ($this->isPageImageField($name)) {
+            abort_if($this->pageUploadContext === null, 403);
+            $ticket = app(PageTemporaryUploads::class)->issue($this->getId(), $this->pageUploadContext, $name);
+        } else {
+            abort_if($this->uploadContext === null, 403);
+            $ticket = app(SectionTemporaryUploads::class)->issue($this->getId(), $this->uploadContext, $name);
+        }
         $url = URL::temporarySignedRoute('phi-cms.images.temporary', now()->addMinutes(5), ['ticket' => $ticket], absolute: false);
         $this->dispatch('upload:generatedSignedUrl', name: $name, url: $url)->self();
     }
@@ -57,7 +68,11 @@ class Preview extends FormsComponent
         foreach ($tmpPath as $signed) {
             $path = TemporaryUploadedFile::extractPathFromSignedPath($signed);
             abort_unless(is_string($path), 403);
-            app(SectionTemporaryUploads::class)->file($path, true, $this->getId(), $name);
+            if ($this->isPageImageField($name)) {
+                app(PageTemporaryUploads::class)->file($path, true, $this->getId(), $name);
+            } else {
+                app(SectionTemporaryUploads::class)->file($path, true, $this->getId(), $name);
+            }
         }
         $this->finishNativeUpload($name, $tmpPath, $isMultiple, $append);
     }
@@ -66,7 +81,11 @@ class Preview extends FormsComponent
     {
         abort_unless(is_string($name) && is_string($tmpFilename), 403);
         $this->authorizeImageField($name);
-        app(SectionTemporaryUploads::class)->file($tmpFilename, true, $this->getId(), $name);
+        if ($this->isPageImageField($name)) {
+            app(PageTemporaryUploads::class)->file($tmpFilename, true, $this->getId(), $name);
+        } else {
+            app(SectionTemporaryUploads::class)->file($tmpFilename, true, $this->getId(), $name);
+        }
         $this->removeNativeUpload($name, $tmpFilename);
     }
 
@@ -74,6 +93,20 @@ class Preview extends FormsComponent
 
     private function authorizeImageField(string $name): void
     {
+        if ($this->isPageImageField($name)) {
+            abort_unless($this->pageMode && $this->pageId !== null, 403);
+            $page = app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
+            app(PageSeoImageContext::class)->set($page, preview: true);
+            app(PageSeoImageContext::class)->authorizeUpload();
+            $field = $this->pageForm->getComponentByStatePath($name, withAbsoluteStatePath: true);
+            if ($field === null && Str::isUuid(Str::afterLast($name, '.'))) {
+                $field = $this->pageForm->getComponentByStatePath(Str::beforeLast($name, '.'), withAbsoluteStatePath: true);
+            }
+            abort_unless($field instanceof PageSeoImage, 403);
+
+            return;
+        }
+
         $this->selectedSection();
         app(SectionImageContext::class)->authorizeUpload();
         $field = $this->form->getComponentByStatePath($name, withAbsoluteStatePath: true);
@@ -81,6 +114,20 @@ class Preview extends FormsComponent
             $field = $this->form->getComponentByStatePath(Str::beforeLast($name, '.'), withAbsoluteStatePath: true);
         }
         abort_unless($field instanceof Image, 403);
+    }
+
+    private function isPageImageField(string $name): bool
+    {
+        if (! str_starts_with($name, 'pageSeoImages.')) {
+            return false;
+        }
+
+        $field = Str::after($name, 'pageSeoImages.');
+        if (Str::isUuid(Str::afterLast($field, '.'))) {
+            $field = Str::beforeLast($field, '.');
+        }
+
+        return in_array($field, ['og_image', 'twitter_image'], true);
     }
 
     #[Locked]
@@ -106,6 +153,11 @@ class Preview extends FormsComponent
 
     /** @var array<string, mixed> */
     public array $pageData = [];
+
+    /** @var array{og_image: mixed, twitter_image: mixed} */
+    public array $pageSeoImages = [];
+
+    public bool $useOgImageForTwitter = false;
 
     /** @var array<string, mixed> */
     #[Locked]
@@ -266,6 +318,8 @@ class Preview extends FormsComponent
         abort_unless($this->pageMode && $this->pageId !== null, 403);
 
         try {
+            $this->mergePageImageState();
+            $this->syncSharedSeoImageState();
             $this->version = app(PageContent::class)->saveDraft(Page::findOrFail($this->pageId), $this->pageData, (int) $this->version);
             $this->pageBaseline = $this->pageData;
             $this->pagePublicationReview = null;
@@ -502,6 +556,18 @@ class Preview extends FormsComponent
         return $schema->components($fields)->statePath('data');
     }
 
+    public function pageForm(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                PageSeoImage::make('og_image')
+                    ->label(__('phi-cms-core::phi-cms-core.og_image')),
+                PageSeoImage::make('twitter_image')
+                    ->label(__('phi-cms-core::phi-cms-core.twitter_image')),
+            ])
+            ->statePath('pageSeoImages');
+    }
+
     public function render(): View
     {
         $this->ensureContext();
@@ -730,7 +796,8 @@ class Preview extends FormsComponent
         abort_unless(config('phi-cms.editing', false), 403);
         if ($this->pageId !== null) {
             if ($this->pageMode) {
-                app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
+                $page = app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
+                app(PageSeoImageContext::class)->set($page, preview: true);
             } else {
                 $this->content()->authorizePage(Page::findOrFail($this->pageId));
                 abort_unless($this->pageView !== null && view()->exists($this->pageView), 404);
@@ -762,6 +829,15 @@ class Preview extends FormsComponent
             'template' => $metadata['template'],
             'metatags' => $metadata['metatags'],
         ];
+        $ogImage = $metadata['metatags']['og_image'] ?? null;
+        $this->useOgImageForTwitter = false;
+        $this->pageSeoImages = [
+            'og_image' => $ogImage === null ? [] : [$ogImage],
+            'twitter_image' => ($metadata['metatags']['twitter_image'] ?? null) === null ? [] : [$metadata['metatags']['twitter_image']],
+        ];
+        app(PageSeoImageContext::class)->set($page, preview: true);
+        $this->pageForm->fill($this->pageSeoImages);
+        $this->pageUploadContext = app(PageTemporaryUploads::class)->activate($this->getId());
         $this->pageBaseline = $this->pageData;
         $this->refreshPageRows();
         $this->pagePublicationReview = null;
@@ -790,6 +866,72 @@ class Preview extends FormsComponent
         $this->baseline = [];
         $this->publicationReview = null;
         $this->cacheSchema('form', null);
+    }
+
+    private function syncSharedSeoImageState(): void
+    {
+        if (! $this->useOgImageForTwitter || ! is_array($this->pageData['metatags'] ?? null)) {
+            return;
+        }
+
+        $ogImage = $this->pageData['metatags']['og_image'] ?? null;
+        $this->pageData['metatags']['twitter_image'] = $ogImage;
+        $this->pageSeoImages['twitter_image'] = $ogImage === null ? [] : [$ogImage];
+        $this->useOgImageForTwitter = false;
+    }
+
+    private function mergePageImageState(): void
+    {
+        $state = $this->pageForm->getState();
+        $imageState = is_array($state)
+            ? array_intersect_key($state, array_flip(['og_image', 'twitter_image']))
+            : [];
+
+        foreach ($imageState as $key => $value) {
+            if (is_array($value)) {
+                $value = array_values($value)[0] ?? null;
+            }
+
+            if ($value === [] || $value === '') {
+                $imageState[$key] = null;
+            } else {
+                $imageState[$key] = $value;
+            }
+        }
+
+        if ($imageState === []) {
+            return;
+        }
+
+        $metatags = $this->pageData['metatags'] ?? null;
+        $hasImageSelection = collect($imageState)->contains(fn (mixed $value): bool => $value !== null && $value !== '');
+        if ($metatags === null) {
+            if (! $hasImageSelection) {
+                return;
+            }
+
+            $metatags = array_fill_keys([
+                'title',
+                'description',
+                'og_title',
+                'og_description',
+                'og_image',
+                'twitter_title',
+                'twitter_card',
+                'twitter_description',
+                'twitter_image',
+                'robots',
+            ], null);
+        }
+
+        if (! is_array($metatags)) {
+            return;
+        }
+
+        foreach ($imageState as $key => $value) {
+            $metatags[$key] = $value;
+        }
+        $this->pageData['metatags'] = $metatags;
     }
 
     private function allows(string $ability, Section $section): bool

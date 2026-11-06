@@ -43,12 +43,10 @@ final class PageContent
         'robots',
     ];
 
-    /** @var list<string> */
-    private const READ_ONLY_IMAGE_KEYS = ['og_image', 'twitter_image'];
-
     public function __construct(
         private PageRegistry $pages,
         private SectionRegistry $sections,
+        private PageSeoImages $seoImages,
     ) {}
 
     /**
@@ -277,12 +275,13 @@ final class PageContent
         return ['page' => $page, 'redirect_slug' => $currentSlug];
     }
 
-    /** @return array{title: string, slug: string, description: string, template: string|null, metatags: array<string, mixed>|null} */
+    /** @return array{title: string, slug: string, description: string, template: string|null, metatags: array<string, mixed>|null, image_urls: array<string, string>} */
     public function published(Page $page): array
     {
         $fresh = Page::query()->published()->with('metatags')->findOrFail($page->getKey());
+        $metadata = $this->metadataFromPage($fresh);
 
-        return $this->metadataFromPage($fresh);
+        return $metadata + ['image_urls' => $this->seoImages->urls($fresh, $metadata['metatags'], preview: false)];
     }
 
     public function authorizePreview(Page $page): Page
@@ -330,6 +329,7 @@ final class PageContent
             $metatags->setRawAttributes($metadata['metatags'], true);
             $preview->setRelation('metatags', $metatags);
         }
+        $preview->setAttribute('image_urls', $this->seoImages->urls($fresh, $metadata['metatags'], preview: true));
 
         return $preview;
     }
@@ -531,7 +531,7 @@ final class PageContent
 
         try {
             $version = $this->transaction(function () use ($page, $fields, $expectedVersion): int {
-                $fresh = $this->lockPage($page->getKey());
+                $fresh = $this->lockPage($page->getKey(), seoMetadata: is_array($fields['metatags'] ?? null) ? $fields['metatags'] : null);
                 $this->authorize('update', $fresh);
                 $this->checkVersion($fresh, $expectedVersion);
                 $metadata = $this->validateMetadata($fields, $fresh);
@@ -772,6 +772,7 @@ final class PageContent
             }
 
             $this->writePublishedMetadata($fresh, $metadata, $expectedVersion + 1);
+            $this->seoImages->markPublished($fresh, $metadata['metatags']);
             $this->reconcilePublishedRows($fresh, $rows);
             $this->syncUrls($fresh, $metadata['slug']);
             session()->forget($this->reviewKey($fresh));
@@ -811,9 +812,10 @@ final class PageContent
         $this->assertAdopted($page);
 
         $this->transaction(function () use ($page, $expectedVersion): void {
-            $fresh = $this->lockPage($page->getKey(), urls: true);
+            $fresh = $this->lockPage($page->getKey(), urls: true, lockAllSeoMedia: true);
             $this->authorize('delete', $fresh);
             $this->checkVersion($fresh, $expectedVersion);
+            $this->seoImages->assertOwnerDeleteAllowed($fresh);
 
             DB::table('page_section')->where('page_id', $fresh->getKey())->delete();
             DB::table('page_legacy_occurrences')->where('page_id', $fresh->getKey())->delete();
@@ -891,6 +893,7 @@ final class PageContent
         $prospective = clone $page;
         $prospective->forceFill(collect($metadata)->except('metatags')->all());
         $prospective->setRelation('metatags', $metadata['metatags'] === null ? null : new Metatags($metadata['metatags']));
+        $prospective->setAttribute('image_urls', $this->seoImages->urls($page, $metadata['metatags'], preview: true));
         $sections = $page->draftSections()->where('sections.status', SectionStatus::ACTIVE)->get();
         $prospective->setRelation('sections', $sections);
 
@@ -1067,13 +1070,13 @@ final class PageContent
             }
         }
 
-        $currentMeta = $this->metadataFromPage($page)['metatags'];
-        foreach (self::READ_ONLY_IMAGE_KEYS as $key) {
-            $currentValue = is_array($currentMeta) ? ($currentMeta[$key] ?? null) : null;
-            $submittedValue = is_array($fields['metatags']) ? $fields['metatags'][$key] : null;
-            if ($submittedValue !== $currentValue) {
-                throw ValidationException::withMessages(["fields.metatags.{$key}" => 'SEO image references are read-only in this workflow.']);
+        if (is_array($fields['metatags'])) {
+            foreach (['og_image', 'twitter_image'] as $key) {
+                if (($fields['metatags'][$key] ?? null) === '') {
+                    $fields['metatags'][$key] = null;
+                }
             }
+            $this->seoImages->validateMetadata($page, $fields['metatags']);
         }
 
         return [
@@ -1173,19 +1176,27 @@ final class PageContent
         }
     }
 
-    /** @param list<int> $additionalSections */
-    private function lockPage(int $pageId, array $additionalSections = [], bool $urls = false): Page
+    /** @param list<int> $additionalSections @param array<string, mixed>|null $seoMetadata */
+    private function lockPage(int $pageId, array $additionalSections = [], bool $urls = false, ?array $seoMetadata = null, bool $lockAllSeoMedia = false): Page
     {
         $snapshot = Page::query()->findOrFail($pageId);
         $references = $this->allSectionIds($pageId);
+        $seoReferences = $this->seoImages->referenceLockSet($snapshot);
         $slugs = $this->urlLockSet($snapshot);
         $claims = [];
         if ($urls) {
             $claims = $this->lockPageUrls($pageId, $slugs);
         }
+        if ($lockAllSeoMedia) {
+            $this->seoImages->lockOwnerMedia($snapshot);
+        } else {
+            $this->seoImages->lockPage($snapshot, $seoMetadata);
+        }
         $this->lockSections([...$references, ...$additionalSections]);
         $fresh = Page::query()->with('metatags')->lockForUpdate()->findOrFail($pageId);
-        if ($references !== $this->allSectionIds($pageId) || ($urls && $slugs !== $this->urlLockSet($fresh))) {
+        if ($references !== $this->allSectionIds($pageId)
+            || $seoReferences !== $this->seoImages->referenceLockSet($fresh)
+            || ($urls && $slugs !== $this->urlLockSet($fresh))) {
             throw new PageConflict('The Page reference or URL lock set changed. Reload latest and review again.');
         }
         if ($urls && $claims !== $this->urlClaims($pageId, $slugs)->get()->map(fn (PageUrl $url): array => $url->getAttributes())->all()) {
