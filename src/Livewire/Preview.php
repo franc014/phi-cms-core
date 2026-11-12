@@ -925,6 +925,19 @@ class Preview extends FormsComponent
         $this->pageData['metatags'] = $metatags;
     }
 
+    /**
+     * Keep the native image form synchronized with the canonical Page draft
+     * after a successful save.
+     */
+    protected function syncPageSeoImageStateFromPageData(): void
+    {
+        $metatags = is_array($this->pageData['metatags'] ?? null)
+            ? $this->pageData['metatags']
+            : [];
+
+        $this->fillPageSeoImageState($metatags);
+    }
+
     protected function pageSeoImageStateIsDirty(): bool
     {
         if (! $this->pageMode) {
