@@ -4,6 +4,7 @@ namespace JFA\PhiCmsCore\Pages;
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -11,7 +12,10 @@ use JFA\PhiCmsCore\Enums\PageStatus;
 use JFA\PhiCmsCore\Models\Media;
 use JFA\PhiCmsCore\Models\Metatags;
 use JFA\PhiCmsCore\Models\Page;
+use JFA\PhiCmsCore\Models\Post;
+use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Sections\MediaMutation;
+use JFA\PhiCmsCore\Sections\SectionRegistry;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use RuntimeException;
 use Throwable;
@@ -147,22 +151,35 @@ final class PageSeoImages
         };
 
         try {
-            $media = MediaMutation::run(fn (): \Spatie\MediaLibrary\MediaCollections\Models\Media => $page
-                ->addMedia($file)
-                ->usingFileName(Str::uuid()->toString() . '.' . $extension)
-                ->withCustomProperties([
-                    'phi_first_published_at' => null,
-                    'phi_tombstoned_at' => null,
-                    'phi_candidate' => $candidate,
-                ])
-                ->toMediaCollection($this->collectionName(), $this->diskName()));
+            return DB::transaction(function () use ($page, $file, $extension, $candidate): string {
+                $lockedPage = Page::query()->lockForUpdate()->find($page->getKey());
+                if ($lockedPage === null || $lockedPage->page_version === null) {
+                    throw ValidationException::withMessages(['pageData.metatags.og_image' => 'The Page is no longer available. The existing SEO image has not changed.']);
+                }
+
+                app(PageSeoImageContext::class)->set($lockedPage, preview: true);
+                $authorizedPage = app(PageSeoImageContext::class)->authorizeUpload();
+                abort_unless((int) $authorizedPage->getKey() === (int) $lockedPage->getKey(), 403);
+
+                $media = MediaMutation::run(fn (): \Spatie\MediaLibrary\MediaCollections\Models\Media => $lockedPage
+                    ->addMedia($file)
+                    ->usingFileName(Str::uuid()->toString() . '.' . $extension)
+                    ->withCustomProperties([
+                        'phi_first_published_at' => null,
+                        'phi_tombstoned_at' => null,
+                        'phi_candidate' => $candidate,
+                    ])
+                    ->toMediaCollection($this->collectionName(), $this->diskName()));
+
+                return 'media:' . $media->uuid;
+            });
+        } catch (ValidationException $exception) {
+            throw $exception;
         } catch (Throwable $exception) {
             report($exception);
 
             throw ValidationException::withMessages(['pageData.metatags.og_image' => 'The image could not be stored. The public Page has not changed. Retry the upload.']);
         }
-
-        return 'media:' . $media->uuid;
     }
 
     /** @param array<string, mixed>|null $metatags */
@@ -278,6 +295,98 @@ final class PageSeoImages
         }
     }
 
+    /** @return array{media_uuid: string, page_id: int, page_title: string, page_slug: string, page_version: int, reference: string, fields: list<string>} */
+    public function inspectUnpublishedOwnerReference(Media $media): array
+    {
+        return $this->unpublishedOwnerReference($media, clear: false);
+    }
+
+    /** @return array{media_uuid: string, page_id: int, page_title: string, page_slug: string, page_version: int, reference: string, fields: list<string>} */
+    public function releaseUnpublishedOwnerReference(Media $media): array
+    {
+        return $this->unpublishedOwnerReference($media, clear: true);
+    }
+
+    /** @return array{media_uuid: string, page_id: int, page_title: string, page_slug: string, page_version: int, reference: string, fields: list<string>} */
+    private function unpublishedOwnerReference(Media $media, bool $clear): array
+    {
+        if (DB::transactionLevel() !== 0) {
+            throw new RuntimeException('Page SEO owner-reference release requires an independent committed transaction.');
+        }
+
+        return DB::transaction(function () use ($media, $clear): array {
+            $locked = Media::query()->lockForUpdate()->findOrFail($media->getKey());
+            if ($locked->collection_name !== $this->collectionName() || $locked->disk !== $this->diskName()) {
+                throw new RuntimeException('Only private PHI Page SEO images support owner-reference release.');
+            }
+            if ($locked->model_type !== (new Page)->getMorphClass()) {
+                throw ValidationException::withMessages(['media' => 'Only Page-owned SEO images support owner-reference release.']);
+            }
+
+            $page = Page::query()->lockForUpdate()->find($locked->model_id);
+            if ($page === null || $page->page_version === null) {
+                throw ValidationException::withMessages(['media' => 'Legacy or unowned Page SEO media is protected from owner-reference release.']);
+            }
+            if ($page->status === PageStatus::PUBLISHED) {
+                throw ValidationException::withMessages(['media' => 'Published Pages cannot release retained SEO references.']);
+            }
+
+            $reference = 'media:' . $locked->uuid;
+            $aliases = $this->aliases($locked);
+            $draft = is_array($page->draft_fields) ? data_get($page->draft_fields, 'metatags') : null;
+            foreach (self::IMAGE_KEYS as $key) {
+                if ($this->containsReference(is_array($draft) ? ($draft[$key] ?? null) : null, $aliases)) {
+                    throw ValidationException::withMessages(['media' => "The Page draft still selects this SEO image in {$key}. Save a different image or clear the draft before releasing the retained reference."]);
+                }
+            }
+
+            $metatagsRows = Metatags::query()
+                ->where('metatable_type', (new Page)->getMorphClass())
+                ->where('metatable_id', $page->getKey())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $fields = [];
+            $updates = [];
+            foreach ($metatagsRows as $row) {
+                foreach (self::IMAGE_KEYS as $key) {
+                    if ($this->containsReference($row->getAttribute($key), $aliases)) {
+                        $fields[] = $key;
+                        $updates[$row->getKey()][$key] = null;
+                    }
+                }
+            }
+            $fields = array_values(array_unique($fields));
+            sort($fields, SORT_STRING);
+            if ($fields === []) {
+                throw ValidationException::withMessages(['media' => 'The unpublished Page has no retained published reference to this SEO image.']);
+            }
+
+            $plan = [
+                'media_uuid' => (string) $locked->uuid,
+                'page_id' => (int) $page->getKey(),
+                'page_title' => (string) $page->title,
+                'page_slug' => (string) $page->slug,
+                'page_version' => (int) $page->page_version,
+                'reference' => $reference,
+                'fields' => $fields,
+            ];
+            if (! $clear) {
+                return $plan;
+            }
+
+            foreach ($updates as $rowId => $values) {
+                DB::table('metatags')->where('id', $rowId)->update([...$values, 'updated_at' => now()]);
+            }
+            DB::table('pages')->where('id', $page->getKey())->update([
+                'page_version' => (int) $page->page_version + 1,
+                'updated_at' => now(),
+            ]);
+
+            return $plan;
+        });
+    }
+
     /** @return list<string> */
     public function referenceLockSet(Page $page): array
     {
@@ -345,35 +454,90 @@ final class PageSeoImages
         return $path;
     }
 
-    /** @return list<array{page_id: int, field: string}> */
+    /**
+     * Inventory every known reference before declaring a Page SEO file unused.
+     *
+     * @return list<array{page_id: int|null, owner_type: string, owner_id: int|null, field: string}>
+     */
     public function usages(Media $media): array
     {
-        $aliases = array_unique([
-            'media:' . $media->uuid,
-            $media->getPath(),
-            $media->getPathRelativeToRoot(),
-            ltrim($media->getPathRelativeToRoot(), '/'),
-            $media->getUrl(),
-        ]);
-        $metatags = Metatags::query()
-            ->where('metatable_type', (new Page)->getMorphClass())
-            ->get()
-            ->groupBy('metatable_id');
+        $aliases = $this->aliases($media);
         $usages = [];
+        $pageType = (new Page)->getMorphClass();
+        $postType = (new Post)->getMorphClass();
 
         foreach (Page::query()->select(['id', 'draft_fields'])->orderBy('id')->get() as $page) {
-            if ($this->containsReference($page->draft_fields, $aliases)) {
-                foreach (self::IMAGE_KEYS as $key) {
-                    if ($this->containsReference(data_get($page->draft_fields, 'metatags.' . $key), $aliases)) {
-                        $usages[] = ['page_id' => (int) $page->getKey(), 'field' => 'draft_fields.metatags.' . $key];
-                    }
+            foreach (self::IMAGE_KEYS as $key) {
+                if ($this->containsReference(data_get($page->draft_fields, 'metatags.' . $key), $aliases)) {
+                    $this->addUsage($usages, $pageType, (int) $page->getKey(), 'draft_fields.metatags.' . $key, (int) $page->getKey());
                 }
             }
-            $meta = $metatags->get($page->getKey())?->first();
+        }
+
+        foreach (Metatags::query()->orderBy('id')->get() as $metatags) {
+            $ownerType = (string) $metatags->getAttribute('metatable_type');
+            $ownerId = (int) $metatags->getAttribute('metatable_id');
+            if (! in_array($ownerType, [$pageType, $postType], true)) {
+                $this->addUsage($usages, $ownerType, $ownerId, 'unknown-inventory');
+
+                continue;
+            }
+
             foreach (self::IMAGE_KEYS as $key) {
-                if ($meta !== null && in_array($meta->getAttribute($key), $aliases, true)) {
-                    $usages[] = ['page_id' => (int) $page->getKey(), 'field' => 'metatags.' . $key];
+                if ($this->containsReference($metatags->getAttribute($key), $aliases)) {
+                    $this->addUsage(
+                        $usages,
+                        $ownerType,
+                        $ownerId,
+                        'metatags.' . $key,
+                        $ownerType === $pageType ? $ownerId : null,
+                    );
                 }
+            }
+        }
+
+        if (Schema::hasTable('posts')) {
+            foreach (Post::query()->select(['id', 'content'])->orderBy('id')->get() as $post) {
+                if ($this->containsReference($post->content, $aliases)) {
+                    $this->addUsage($usages, $postType, (int) $post->getKey(), 'content');
+                }
+            }
+        }
+
+        if (Schema::hasTable('sections')) {
+            foreach (Section::query()
+                ->select(['id', 'type', 'content_version', 'content', 'draft_content', 'published_content', 'legacy_image_sources'])
+                ->orderBy('id')
+                ->get() as $section) {
+                foreach (['content', 'draft_content', 'published_content', 'legacy_image_sources'] as $field) {
+                    if ($this->containsReference($section->getAttribute($field), $aliases)) {
+                        $this->addUsage($usages, (new Section)->getMorphClass(), (int) $section->getKey(), $field);
+                    }
+                }
+
+                try {
+                    $definition = app(SectionRegistry::class)->get((string) $section->type);
+                    if ($section->content_version === null) {
+                        $blocks = $section->content;
+                        if (! is_array($blocks) || count($blocks) !== 1 || ($blocks[0]['type'] ?? null) !== $section->type || ! is_array($blocks[0]['data'] ?? null)) {
+                            throw new RuntimeException('Unknown legacy envelope.');
+                        }
+                        $definition::adoptLegacy($blocks[0]['data']);
+                    } else {
+                        $definition::normalize($section->draft_content ?? []);
+                        $definition::normalize($section->published_content ?? []);
+                    }
+                } catch (Throwable) {
+                    $this->addUsage($usages, (new Section)->getMorphClass(), (int) $section->getKey(), 'incomplete-inventory');
+                }
+            }
+        }
+
+        foreach (Media::query()->whereKeyNot($media->getKey())->where('disk', $media->disk)->orderBy('id')->get() as $other) {
+            if ($this->containsReference($other->getPath(), $aliases)
+                || $this->containsReference($other->getPathRelativeToRoot(), $aliases)
+                || $this->containsReference($other->getUrl(), $aliases)) {
+                $this->addUsage($usages, (string) $other->model_type, (int) $other->model_id, 'media.' . $other->getKey());
             }
         }
 
@@ -501,12 +665,15 @@ final class PageSeoImages
     private function pageMetadataSnapshots(Page $page): array
     {
         $draft = is_array($page->draft_fields) ? ($page->draft_fields['metatags'] ?? null) : null;
-        $metatags = $page->relationLoaded('metatags') ? $page->metatags : $page->metatags()->first();
+        $metatags = Metatags::query()
+            ->where('metatable_type', (new Page)->getMorphClass())
+            ->where('metatable_id', $page->getKey())
+            ->orderBy('id')
+            ->get()
+            ->map(fn (Metatags $metatag): array => $metatag->toArray())
+            ->all();
 
-        return [
-            is_array($draft) ? $draft : null,
-            $metatags?->toArray(),
-        ];
+        return [is_array($draft) ? $draft : null, ...$metatags];
     }
 
     /** @param array<string, mixed>|null $metatags @return list<string> */
@@ -557,5 +724,35 @@ final class PageSeoImages
         }
 
         return false;
+    }
+
+    /** @return list<string> */
+    private function aliases(Media $media): array
+    {
+        $aliases = [
+            'media:' . $media->uuid,
+            $media->getPath(),
+            $media->getPathRelativeToRoot(),
+            ltrim($media->getPathRelativeToRoot(), '/'),
+        ];
+
+        try {
+            $aliases[] = $media->getUrl();
+        } catch (Throwable) {
+            // An unavailable disk is itself handled by the cleanup guards.
+        }
+
+        return array_values(array_unique(array_filter($aliases, is_string(...))));
+    }
+
+    /** @param list<array{page_id: int|null, owner_type: string, owner_id: int|null, field: string}> $usages */
+    private function addUsage(array &$usages, string $ownerType, int $ownerId, string $field, ?int $pageId = null): void
+    {
+        $usages[] = [
+            'page_id' => $pageId,
+            'owner_type' => $ownerType,
+            'owner_id' => $ownerId,
+            'field' => $field,
+        ];
     }
 }

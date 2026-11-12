@@ -34,6 +34,9 @@ use Livewire\Features\SupportFileUploads\WithFileUploads;
 /** @property-read Schema $form */
 class Preview extends FormsComponent
 {
+    /** @var list<string> */
+    protected const SEO_IMAGE_FIELDS = ['og_image', 'twitter_image'];
+
     use WithFileUploads {
         _finishUpload as protected finishNativeUpload;
         _removeUpload as protected removeNativeUpload;
@@ -322,6 +325,7 @@ class Preview extends FormsComponent
             $this->syncSharedSeoImageState();
             $this->version = app(PageContent::class)->saveDraft(Page::findOrFail($this->pageId), $this->pageData, (int) $this->version);
             $this->pageBaseline = $this->pageData;
+            $this->syncPageSeoImageStateFromPageData();
             $this->pagePublicationReview = null;
             $this->resetErrorBag();
 
@@ -725,7 +729,7 @@ class Preview extends FormsComponent
 
     private function pageIsDirty(): bool
     {
-        return $this->pageMode && $this->pageData !== $this->pageBaseline;
+        return $this->pageMode && ($this->pageData !== $this->pageBaseline || $this->pageSeoImageStateIsDirty());
     }
 
     private function sectionIsDirty(): bool
@@ -829,14 +833,9 @@ class Preview extends FormsComponent
             'template' => $metadata['template'],
             'metatags' => $metadata['metatags'],
         ];
-        $ogImage = $metadata['metatags']['og_image'] ?? null;
         $this->useOgImageForTwitter = false;
-        $this->pageSeoImages = [
-            'og_image' => $ogImage === null ? [] : [$ogImage],
-            'twitter_image' => ($metadata['metatags']['twitter_image'] ?? null) === null ? [] : [$metadata['metatags']['twitter_image']],
-        ];
+        $this->fillPageSeoImageState($metadata['metatags'] ?? []);
         app(PageSeoImageContext::class)->set($page, preview: true);
-        $this->pageForm->fill($this->pageSeoImages);
         $this->pageUploadContext = app(PageTemporaryUploads::class)->activate($this->getId());
         $this->pageBaseline = $this->pageData;
         $this->refreshPageRows();
@@ -868,7 +867,7 @@ class Preview extends FormsComponent
         $this->cacheSchema('form', null);
     }
 
-    private function syncSharedSeoImageState(): void
+    protected function syncSharedSeoImageState(): void
     {
         if (! $this->useOgImageForTwitter || ! is_array($this->pageData['metatags'] ?? null)) {
             return;
@@ -880,7 +879,7 @@ class Preview extends FormsComponent
         $this->useOgImageForTwitter = false;
     }
 
-    private function mergePageImageState(): void
+    protected function mergePageImageState(): void
     {
         $state = $this->pageForm->getState();
         $imageState = is_array($state)
@@ -888,15 +887,7 @@ class Preview extends FormsComponent
             : [];
 
         foreach ($imageState as $key => $value) {
-            if (is_array($value)) {
-                $value = array_values($value)[0] ?? null;
-            }
-
-            if ($value === [] || $value === '') {
-                $imageState[$key] = null;
-            } else {
-                $imageState[$key] = $value;
-            }
+            $imageState[$key] = $this->normalizePageSeoImageValue($value);
         }
 
         if ($imageState === []) {
@@ -932,6 +923,73 @@ class Preview extends FormsComponent
             $metatags[$key] = $value;
         }
         $this->pageData['metatags'] = $metatags;
+    }
+
+    protected function pageSeoImageStateIsDirty(): bool
+    {
+        if (! $this->pageMode) {
+            return false;
+        }
+
+        $baseline = is_array($this->pageBaseline['metatags'] ?? null)
+            ? $this->pageBaseline['metatags']
+            : [];
+
+        foreach (self::SEO_IMAGE_FIELDS as $field) {
+            if ($this->comparablePageSeoImageValue($this->pageSeoImages[$field] ?? null)
+                !== $this->comparablePageSeoImageValue($baseline[$field] ?? null)) {
+                return true;
+            }
+        }
+
+        return $this->useOgImageForTwitter;
+    }
+
+    /** @return array<string, mixed> */
+    protected function currentPageSeoImageState(): array
+    {
+        $state = is_array($this->pageSeoImages) ? $this->pageSeoImages : [];
+
+        foreach (self::SEO_IMAGE_FIELDS as $field) {
+            if (array_key_exists($field, $state)) {
+                $state[$field] = $this->normalizePageSeoImageValue($state[$field]);
+            }
+        }
+
+        return array_intersect_key($state, array_flip(self::SEO_IMAGE_FIELDS));
+    }
+
+    protected function comparablePageSeoImageValue(mixed $value): mixed
+    {
+        $value = $this->normalizePageSeoImageValue($value);
+
+        if ($value instanceof TemporaryUploadedFile) {
+            return 'pending:' . $value->getFilename();
+        }
+
+        return $value;
+    }
+
+    /** @param array<string, mixed> $metatags */
+    protected function fillPageSeoImageState(array $metatags): void
+    {
+        $this->pageSeoImages = [];
+
+        foreach (self::SEO_IMAGE_FIELDS as $field) {
+            $value = $this->normalizePageSeoImageValue($metatags[$field] ?? null);
+            $this->pageSeoImages[$field] = $value === null ? [] : [$value];
+        }
+
+        $this->pageForm->fill($this->pageSeoImages);
+    }
+
+    protected function normalizePageSeoImageValue(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $value = array_values($value)[0] ?? null;
+        }
+
+        return $value === '' || $value === [] ? null : $value;
     }
 
     private function allows(string $ability, Section $section): bool
