@@ -25,8 +25,8 @@ final class PageSeoImage extends FileUpload
                 $file->getFilename(),
                 true,
                 $this->getLivewire()->getId(),
-                $this->getStatePath(),
             );
+            abort_unless(in_array($binding['field'], [$this->getStatePath(), $this->getStatePath() . '.' . $fileKey], true), 403);
             abort_unless((int) $binding['page'] === (int) $page->getKey(), 403);
         }
 
