@@ -264,6 +264,11 @@ it('serves an unsaved candidate only to its active editor and keeps saved refere
     $this->withCookie(config('session.cookie'), session()->getId());
 
     $this->get($url)->assertOk();
+    $tampered = preg_replace('/signature=[^&]+/', 'signature=invalid', $url);
+    $this->get($tampered)->assertNotFound();
+    $this->travel(31)->minutes();
+    $this->get($url)->assertNotFound();
+    $this->travelBack();
     $context->set($page);
     app(PageTemporaryUploads::class)->activate('other');
     session()->save();

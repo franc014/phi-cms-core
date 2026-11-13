@@ -2,6 +2,7 @@
 
 namespace JFA\PhiCmsCore\Pages;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -19,7 +20,6 @@ use JFA\PhiCmsCore\Sections\MediaMutation;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use RuntimeException;
-use Spatie\Activitylog\Contracts\Activity;
 use Throwable;
 
 final class PageSeoImages
@@ -396,7 +396,7 @@ final class PageSeoImages
                     'owner_release' => $plan,
                     'consequence' => 'Clear the listed retained public references and increment the Page version; physical cleanup follows a separate unused check.',
                 ])
-                ->tap(function (Activity $activity): void {
+                ->tap(function (Model $activity): void {
                     $activity->setConnection(DB::getDefaultConnection());
                 })
                 ->log('Page SEO owner reference release confirmed');
