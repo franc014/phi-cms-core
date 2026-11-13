@@ -824,7 +824,7 @@ class Preview extends FormsComponent
     {
         abort_unless($this->pageId !== null, 403);
         $page = Page::findOrFail($this->pageId);
-        $metadata = app(PageContent::class)->preview($page);
+        $metadata = app(PageContent::class)->editorFields($page);
         $this->version = $metadata['version'];
         $this->pageData = [
             'title' => $metadata['title'],

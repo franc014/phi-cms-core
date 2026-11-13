@@ -3,13 +3,36 @@
 namespace JFA\PhiCmsCore\Forms\Components;
 
 use Filament\Forms\Components\FileUpload;
+use Filament\Support\Components\Attributes\Exposed;
 use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\ValidationException;
+use JFA\PhiCmsCore\Pages\PageSeoImageContext;
 use JFA\PhiCmsCore\Pages\PageSeoImages;
+use JFA\PhiCmsCore\Pages\PageTemporaryUploads;
+use Livewire\Attributes\Renderless;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 final class PageSeoImage extends FileUpload
 {
+    #[Exposed]
+    #[Renderless]
+    public function removeUploadedFile(string $fileKey): string | TemporaryUploadedFile | null
+    {
+        $page = app(PageSeoImageContext::class)->authorizeUpload();
+        $file = $this->getRawState()[$fileKey] ?? null;
+        if ($file instanceof TemporaryUploadedFile) {
+            $binding = app(PageTemporaryUploads::class)->file(
+                $file->getFilename(),
+                true,
+                $this->getLivewire()->getId(),
+                $this->getStatePath(),
+            );
+            abort_unless((int) $binding['page'] === (int) $page->getKey(), 403);
+        }
+
+        return parent::removeUploadedFile($fileKey);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

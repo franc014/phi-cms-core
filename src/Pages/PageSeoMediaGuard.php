@@ -16,12 +16,12 @@ final class PageSeoMediaGuard
         }
 
         $owners = array_unique([
-            [$media->model_type, $media->model_id],
-            [$media->getRawOriginal('model_type'), $media->getRawOriginal('model_id')],
+            [$media->model_type, $media->model_id, $media->collection_name],
+            [$media->getRawOriginal('model_type'), $media->getRawOriginal('model_id'), $media->getRawOriginal('collection_name')],
         ], SORT_REGULAR);
 
-        foreach ($owners as [$type, $id]) {
-            if ($type !== (new Page)->getMorphClass() || $id === null || $media->collection_name !== app(PageSeoImages::class)->collectionName()) {
+        foreach ($owners as [$type, $id, $collection]) {
+            if ($type !== (new Page)->getMorphClass() || $id === null || $collection !== app(PageSeoImages::class)->collectionName()) {
                 continue;
             }
 

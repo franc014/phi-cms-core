@@ -275,7 +275,7 @@ final class PageContent
         return ['page' => $page, 'redirect_slug' => $currentSlug];
     }
 
-    /** @return array{title: string, slug: string, description: string, template: string|null, metatags: array<string, mixed>|null, image_urls: array<string, string>} */
+    /** @return array{title: string, slug: string, description: string, template: string|null, metatags: array<string, mixed>|null, image_urls: array{og_image: string|null, twitter_image: string|null}} */
     public function published(Page $page): array
     {
         $fresh = Page::query()->published()->with('metatags')->findOrFail($page->getKey());
@@ -299,8 +299,24 @@ final class PageContent
         return $fresh;
     }
 
-    /** @return array{title: string, slug: string, description: string, template: string, metatags: array<string, mixed>|null, version: int} */
+    /** @return array{title: string, slug: string, description: string, template: string, metatags: array<string, mixed>|null, version: int, image_urls: array{og_image: string|null, twitter_image: string|null}} */
     public function preview(Page $page): array
+    {
+        $fresh = $this->authorizePreview($page);
+        $metadata = $this->draftMetadata($fresh);
+
+        return $metadata + [
+            'version' => (int) $fresh->page_version,
+            'image_urls' => $this->seoImages->urls($fresh, $metadata['metatags'], preview: true, strict: true),
+        ];
+    }
+
+    /**
+     * Canonical editable fields remain available for replacing or clearing broken image selections.
+     *
+     * @return array{title: string, slug: string, description: string, template: string, metatags: array<string, mixed>|null, version: int}
+     */
+    public function editorFields(Page $page): array
     {
         $fresh = $this->authorizePreview($page);
         $metadata = $this->draftMetadata($fresh);

@@ -405,17 +405,44 @@ final class PageSeoImages
         return $references;
     }
 
-    /** @param array<string, mixed>|null $metatags */
-    public function urls(Page $page, ?array $metatags, bool $preview): array
+    /**
+     * @param  array<string, mixed>|null  $metatags
+     * @return array{og_image: string|null, twitter_image: string|null}
+     */
+    public function urls(Page $page, ?array $metatags, bool $preview, bool $strict = false): array
     {
-        $urls = [];
+        $urls = array_fill_keys(self::IMAGE_KEYS, null);
+        $uuids = [];
+        foreach (self::IMAGE_KEYS as $key) {
+            $value = $metatags[$key] ?? null;
+            if (is_string($value) && str_starts_with($value, 'media:')) {
+                $uuids[] = Str::after($value, 'media:');
+            }
+        }
+        $originals = Media::query()
+            ->whereIn('uuid', $uuids)
+            ->where('model_type', $page->getMorphClass())
+            ->where('model_id', $page->getKey())
+            ->where('collection_name', $this->collectionName())
+            ->get()->keyBy('uuid');
         foreach (self::IMAGE_KEYS as $key) {
             $reference = $metatags[$key] ?? null;
-            if (! is_string($reference) || ! str_starts_with($reference, 'media:')) {
+            if ($reference === null || $reference === '') {
                 continue;
             }
-            $media = $this->mediaForReference($page, $reference);
-            if ($media === null || $media->getCustomProperty('phi_tombstoned_at')) {
+            if (is_string($reference) && ! str_starts_with($reference, 'media:')) {
+                $urls[$key] = asset('storage/' . $reference);
+
+                continue;
+            }
+            $media = is_string($reference) ? $originals->get(Str::after($reference, 'media:')) : null;
+            if ($media === null || $media->disk !== $this->diskName()
+                || $media->getCustomProperty('phi_tombstoned_at') || ! $this->hasOriginal($media)
+                || (! $preview && ! $media->getCustomProperty('phi_first_published_at'))) {
+                if (! $preview || $strict) {
+                    throw new RuntimeException("Page SEO image delivery is unavailable for {$key}.");
+                }
+
                 continue;
             }
             $urls[$key] = $preview
@@ -724,6 +751,22 @@ final class PageSeoImages
         }
 
         return false;
+    }
+
+    /** @param list<mixed> $references */
+    public function assertLegacyMetatagReferences(array $references): void
+    {
+        $references = array_filter($references, fn (mixed $value): bool => is_string($value) && $value !== '');
+        if ($references === [] || ! Schema::hasTable('media')) {
+            return;
+        }
+
+        foreach (Media::query()->where('model_type', (new Page)->getMorphClass())
+            ->where('collection_name', $this->collectionName())->orderBy('id')->get() as $media) {
+            if (array_intersect($references, $this->aliases($media)) !== []) {
+                throw ValidationException::withMessages(['metatags' => 'Protected image aliases must be changed through the Page draft workflow.']);
+            }
+        }
     }
 
     /** @return list<string> */
