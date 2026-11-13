@@ -29,6 +29,11 @@ final class PageSeoImageController extends Controller
     {
         request()->attributes->set('phi-cms.private', true);
         $context->set($page, preview: true);
+        if (request()->has('editor')) {
+            abort_unless(request()->hasValidSignature() && is_string(request()->query('editor')), 404);
+            $editor = request()->query('editor');
+            $context->set($page, preview: true, editor: $editor, token: session('phi-cms.page-upload-editors.' . $editor));
+        }
         $page = $context->authorizeRead();
         $mediaClass = config('media-library.media_model');
         $media = $mediaClass::query()->where('uuid', $uuid)->firstOrFail();

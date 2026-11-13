@@ -6,6 +6,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use JFA\PhiCmsCore\Enums\PageStatus;
@@ -18,6 +19,7 @@ use JFA\PhiCmsCore\Sections\MediaMutation;
 use JFA\PhiCmsCore\Sections\SectionRegistry;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 use RuntimeException;
+use Spatie\Activitylog\Contracts\Activity;
 use Throwable;
 
 final class PageSeoImages
@@ -98,7 +100,7 @@ final class PageSeoImages
                 'name' => $media->file_name,
                 'size' => (int) $media->size,
                 'type' => $media->mime_type,
-                'url' => route('phi-cms.page-images.preview', ['page' => $page, 'uuid' => $media->uuid]),
+                'url' => $this->privatePreviewUrl($page, $media),
             ];
         }
 
@@ -130,6 +132,7 @@ final class PageSeoImages
             'actor' => (string) auth()->id(),
             'session' => hash('sha256', session()->getId()),
             'page' => $page->getKey(),
+            ...app(PageSeoImageContext::class)->editor(),
         ];
         if ($file instanceof TemporaryUploadedFile) {
             $candidate = app(PageTemporaryUploads::class)->file($file->getFilename(), true);
@@ -157,7 +160,6 @@ final class PageSeoImages
                     throw ValidationException::withMessages(['pageData.metatags.og_image' => 'The Page is no longer available. The existing SEO image has not changed.']);
                 }
 
-                app(PageSeoImageContext::class)->set($lockedPage, preview: true);
                 $authorizedPage = app(PageSeoImageContext::class)->authorizeUpload();
                 abort_unless((int) $authorizedPage->getKey() === (int) $lockedPage->getKey(), 403);
 
@@ -295,26 +297,32 @@ final class PageSeoImages
         }
     }
 
-    /** @return array{media_uuid: string, page_id: int, page_title: string, page_slug: string, page_version: int, reference: string, fields: list<string>} */
+    /** @return array<string, mixed> */
     public function inspectUnpublishedOwnerReference(Media $media): array
     {
         return $this->unpublishedOwnerReference($media, clear: false);
     }
 
-    /** @return array{media_uuid: string, page_id: int, page_title: string, page_slug: string, page_version: int, reference: string, fields: list<string>} */
-    public function releaseUnpublishedOwnerReference(Media $media): array
+    /**
+     * @param  array<string, mixed>  $expectedPlan
+     * @return array<string, mixed>
+     */
+    public function releaseUnpublishedOwnerReference(Media $media, array $expectedPlan): array
     {
-        return $this->unpublishedOwnerReference($media, clear: true);
+        return $this->unpublishedOwnerReference($media, clear: true, expectedPlan: $expectedPlan);
     }
 
-    /** @return array{media_uuid: string, page_id: int, page_title: string, page_slug: string, page_version: int, reference: string, fields: list<string>} */
-    private function unpublishedOwnerReference(Media $media, bool $clear): array
+    /**
+     * @param  array<string, mixed>|null  $expectedPlan
+     * @return array<string, mixed>
+     */
+    private function unpublishedOwnerReference(Media $media, bool $clear, ?array $expectedPlan = null): array
     {
         if (DB::transactionLevel() !== 0) {
             throw new RuntimeException('Page SEO owner-reference release requires an independent committed transaction.');
         }
 
-        return DB::transaction(function () use ($media, $clear): array {
+        return DB::transaction(function () use ($media, $clear, $expectedPlan): array {
             $locked = Media::query()->lockForUpdate()->findOrFail($media->getKey());
             if ($locked->collection_name !== $this->collectionName() || $locked->disk !== $this->diskName()) {
                 throw new RuntimeException('Only private PHI Page SEO images support owner-reference release.');
@@ -348,11 +356,13 @@ final class PageSeoImages
                 ->get();
             $fields = [];
             $updates = [];
+            $oldValues = [];
             foreach ($metatagsRows as $row) {
                 foreach (self::IMAGE_KEYS as $key) {
                     if ($this->containsReference($row->getAttribute($key), $aliases)) {
                         $fields[] = $key;
                         $updates[$row->getKey()][$key] = null;
+                        $oldValues[$row->getKey()][$key] = $row->getAttribute($key);
                     }
                 }
             }
@@ -370,9 +380,28 @@ final class PageSeoImages
                 'page_version' => (int) $page->page_version,
                 'reference' => $reference,
                 'fields' => $fields,
+                'old_values' => $oldValues,
             ];
+            $plan['confirmation'] = hash('sha256', json_encode($plan, JSON_THROW_ON_ERROR));
             if (! $clear) {
                 return $plan;
+            }
+            if ($expectedPlan !== $plan) {
+                throw ValidationException::withMessages(['media' => 'The owner release plan has changed. Inspect and confirm the current Page version and references again.']);
+            }
+
+            $audit = activity('phi-page-seo')
+                ->performedOn($page)
+                ->withProperties([
+                    'owner_release' => $plan,
+                    'consequence' => 'Clear the listed retained public references and increment the Page version; physical cleanup follows a separate unused check.',
+                ])
+                ->tap(function (Activity $activity): void {
+                    $activity->setConnection(DB::getDefaultConnection());
+                })
+                ->log('Page SEO owner reference release confirmed');
+            if ($audit === null) {
+                throw new RuntimeException('Owner-reference release requires an enabled durable activity audit.');
             }
 
             foreach ($updates as $rowId => $values) {
@@ -473,6 +502,8 @@ final class PageSeoImages
         abort_unless($media->model_type === $page->getMorphClass() && (int) $media->model_id === (int) $page->getKey(), 404);
         abort_unless($media->collection_name === $this->collectionName(), 404);
         abort_unless(! $media->getCustomProperty('phi_tombstoned_at'), 404);
+        abort_unless($this->referenceInMetadata($page, 'media:' . $media->uuid)
+            || app(PageSeoImageContext::class)->editor()['editor'] !== null, 404);
         abort_unless($this->allowsReference($page, 'media:' . $media->uuid), 404);
 
         $path = $media->getPath();
@@ -552,7 +583,9 @@ final class PageSeoImages
                         $definition::adoptLegacy($blocks[0]['data']);
                     } else {
                         $definition::normalize($section->draft_content ?? []);
-                        $definition::normalize($section->published_content ?? []);
+                        if ($section->published_content !== null) {
+                            $definition::normalize($section->published_content);
+                        }
                     }
                 } catch (Throwable) {
                     $this->addUsage($usages, (new Section)->getMorphClass(), (int) $section->getKey(), 'incomplete-inventory');
@@ -674,7 +707,21 @@ final class PageSeoImages
             && ($candidate['actor'] ?? null) === (string) auth()->id()
             && ($candidate['session'] ?? null) === hash('sha256', session()->getId())
             && (int) ($candidate['page'] ?? 0) === (int) $page->getKey()
-            && (! isset($candidate['editor']) || session('phi-cms.page-upload-editors.' . $candidate['editor']) === ($candidate['token'] ?? null));
+            && (int) app(PageSeoImageContext::class)->page()->getKey() === (int) $page->getKey()
+            && app(PageSeoImageContext::class)->matchesEditor($candidate);
+    }
+
+    private function privatePreviewUrl(Page $page, Media $media): string
+    {
+        $parameters = ['page' => $page, 'uuid' => $media->uuid];
+        if ($this->referenceInMetadata($page, 'media:' . $media->uuid)) {
+            return route('phi-cms.page-images.preview', $parameters);
+        }
+
+        return URL::temporarySignedRoute('phi-cms.page-images.preview', now()->addMinutes(30), [
+            ...$parameters,
+            'editor' => app(PageSeoImageContext::class)->editor()['editor'],
+        ]);
     }
 
     private function referenceInMetadata(Page $page, string $reference): bool

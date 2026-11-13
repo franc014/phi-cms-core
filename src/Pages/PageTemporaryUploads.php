@@ -20,6 +20,8 @@ final class PageTemporaryUploads
     {
         $token = Str::uuid()->toString();
         session()->put('phi-cms.page-upload-editors.' . $editor, $token);
+        $page = app(PageSeoImageContext::class)->page();
+        session()->put('phi-cms.page-active-editor.' . $page->getKey(), $editor);
 
         return $token;
     }
@@ -90,10 +92,14 @@ final class PageTemporaryUploads
         abort_unless((string) auth()->id() === ($binding['actor'] ?? null)
             && hash_equals((string) ($binding['session'] ?? ''), hash('sha256', session()->getId()))
             && session('phi-cms.page-upload-editors.' . ($binding['editor'] ?? '')) === ($binding['token'] ?? null), 403);
+        abort_unless(session('phi-cms.page-active-editor.' . ($binding['page'] ?? '')) === ($binding['editor'] ?? null), 403);
 
         $page = Page::query()->findOrFail((int) ($binding['page'] ?? 0));
         $context = app(PageSeoImageContext::class);
-        $context->set($page, preview: true);
+        if ($context->editor()['editor'] !== null) {
+            abort_unless((int) $context->page()->getKey() === (int) $page->getKey() && $context->matchesEditor($binding), 403);
+        }
+        $context->set($page, preview: true, editor: $binding['editor'], token: $binding['token']);
         if ($write) {
             $context->authorizeUpload();
         } else {

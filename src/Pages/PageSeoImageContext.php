@@ -13,11 +13,17 @@ final class PageSeoImageContext
 
     private bool $readAuthorized = false;
 
-    public function set(Page $page, bool $preview = true): void
+    private ?string $editor = null;
+
+    private ?string $token = null;
+
+    public function set(Page $page, bool $preview = true, ?string $editor = null, ?string $token = null): void
     {
         $this->pageId = (int) $page->getKey();
         $this->preview = $preview;
         $this->readAuthorized = false;
+        $this->editor = $editor;
+        $this->token = $token;
     }
 
     public function clear(): void
@@ -25,6 +31,26 @@ final class PageSeoImageContext
         $this->pageId = null;
         $this->preview = false;
         $this->readAuthorized = false;
+        $this->editor = null;
+        $this->token = null;
+    }
+
+    /** @return array{editor: string|null, token: string|null} */
+    public function editor(): array
+    {
+        return ['editor' => $this->editor, 'token' => $this->token];
+    }
+
+    /** @param array<string, mixed> $binding */
+    public function matchesEditor(array $binding): bool
+    {
+        return ($binding['editor'] ?? null) === $this->editor
+            && ($binding['token'] ?? null) === $this->token
+            && ($this->editor === null || (
+                is_string($this->token)
+                && session('phi-cms.page-upload-editors.' . $this->editor) === $this->token
+                && session('phi-cms.page-active-editor.' . $this->pageId) === $this->editor
+            ));
     }
 
     public function page(): Page

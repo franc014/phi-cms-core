@@ -99,7 +99,7 @@ class Preview extends FormsComponent
         if ($this->isPageImageField($name)) {
             abort_unless($this->pageMode && $this->pageId !== null, 403);
             $page = app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
-            app(PageSeoImageContext::class)->set($page, preview: true);
+            $this->setPageSeoImageContext($page);
             app(PageSeoImageContext::class)->authorizeUpload();
             $field = $this->pageForm->getComponentByStatePath($name, withAbsoluteStatePath: true);
             if ($field === null && Str::isUuid(Str::afterLast($name, '.'))) {
@@ -801,7 +801,7 @@ class Preview extends FormsComponent
         if ($this->pageId !== null) {
             if ($this->pageMode) {
                 $page = app(PageContent::class)->authorizePreview(Page::findOrFail($this->pageId));
-                app(PageSeoImageContext::class)->set($page, preview: true);
+                $this->setPageSeoImageContext($page);
             } else {
                 $this->content()->authorizePage(Page::findOrFail($this->pageId));
                 abort_unless($this->pageView !== null && view()->exists($this->pageView), 404);
@@ -834,9 +834,10 @@ class Preview extends FormsComponent
             'metatags' => $metadata['metatags'],
         ];
         $this->useOgImageForTwitter = false;
-        $this->fillPageSeoImageState($metadata['metatags'] ?? []);
         app(PageSeoImageContext::class)->set($page, preview: true);
         $this->pageUploadContext = app(PageTemporaryUploads::class)->activate($this->getId());
+        $this->setPageSeoImageContext($page);
+        $this->fillPageSeoImageState($metadata['metatags'] ?? []);
         $this->pageBaseline = $this->pageData;
         $this->refreshPageRows();
         $this->pagePublicationReview = null;
@@ -877,6 +878,16 @@ class Preview extends FormsComponent
         $this->pageData['metatags']['twitter_image'] = $ogImage;
         $this->pageSeoImages['twitter_image'] = $ogImage === null ? [] : [$ogImage];
         $this->useOgImageForTwitter = false;
+    }
+
+    protected function setPageSeoImageContext(Page $page): void
+    {
+        app(PageSeoImageContext::class)->set(
+            $page,
+            preview: true,
+            editor: $this->getId(),
+            token: $this->pageUploadContext,
+        );
     }
 
     protected function mergePageImageState(): void

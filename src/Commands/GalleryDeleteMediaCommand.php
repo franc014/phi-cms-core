@@ -17,6 +17,7 @@ final class GalleryDeleteMediaCommand extends Command
         {--dry-run : Report usages without changing rows or files}
         {--confirm : Confirm operator-only physical deletion}
         {--force : Bypass the interactive confirmation prompt}
+        {--owner-release-plan= : Exact confirmation fingerprint from the reviewed owner-release dry-run}
         {--clear-unpublished-owner-reference : Clear matching retained published references on an unpublished Page before cleanup}';
 
     /** @var list<string> */
@@ -71,7 +72,20 @@ final class GalleryDeleteMediaCommand extends Command
             }
 
             if ($this->option('clear-unpublished-owner-reference')) {
-                $release = $pageSeoImages->releaseUnpublishedOwnerReference($media);
+                $plan = $pageSeoImages->inspectUnpublishedOwnerReference($media);
+                $this->line(json_encode(['owner_release' => $plan], JSON_THROW_ON_ERROR));
+                $confirmation = $this->option('owner-release-plan');
+                if ($confirmation !== null) {
+                    if (! is_string($confirmation) || ! hash_equals($plan['confirmation'], $confirmation)) {
+                        throw new RuntimeException('The owner release plan has changed. Inspect and confirm the current Page version and references again.');
+                    }
+                } elseif ($this->option('force') || ! $this->input->isInteractive()) {
+                    throw new RuntimeException('Review --dry-run --clear-unpublished-owner-reference and pass its exact --owner-release-plan fingerprint.');
+                } elseif (! $this->confirm('Release these retained Page references, increment its version, and then attempt physical deletion?')) {
+                    throw new RuntimeException('Owner-reference release cancelled; no references or files changed.');
+                }
+
+                $release = $pageSeoImages->releaseUnpublishedOwnerReference($media, $plan);
                 $this->line(json_encode(['owner_release' => $release], JSON_THROW_ON_ERROR));
                 $pageSeoImages->delete($media->fresh());
                 $this->info('Page SEO image owner reference released and image deleted.');

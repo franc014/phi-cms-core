@@ -69,6 +69,7 @@ it('serves a Page temporary upload through the Livewire preview endpoint', funct
 
     session()->start();
     $editor = Str::uuid()->toString();
+    app(PageSeoImageContext::class)->set($page, preview: true);
     $token = app(PageTemporaryUploads::class)->activate($editor);
     session()->save();
     $this->withCookie(config('session.cookie'), session()->getId());
