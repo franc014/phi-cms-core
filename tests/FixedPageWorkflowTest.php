@@ -1,5 +1,6 @@
 <?php
 
+use Filament\Actions\Testing\TestAction;
 use Filament\Panel;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User;
@@ -13,6 +14,7 @@ use JFA\PhiCmsCore\Livewire\Preview;
 use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Pages\PageContent;
 use JFA\PhiCmsCore\Pages\PageTemplate;
+use JFA\PhiCmsCore\Resources\Pages\Pages\ManagePageSections;
 use JFA\PhiCmsCore\Sections\SectionDefinition;
 use Livewire\Livewire;
 
@@ -67,6 +69,14 @@ class FixedWorkflowPage extends PageTemplate
     }
 }
 
+class FixedWorkflowServices extends FixedWorkflowSection
+{
+    public static function key(): string
+    {
+        return 'services';
+    }
+}
+
 class VariableWorkflowPage extends PageTemplate
 {
     public static function key(): string
@@ -85,7 +95,18 @@ class VariableWorkflowPage extends PageTemplate
     }
 }
 
-function fixedWorkflowFixture(): Page
+class TwoSlotWorkflowPage extends FixedWorkflowPage
+{
+    public static function composition(): array
+    {
+        $composition = parent::composition();
+        $composition['slots']['footer'] = $composition['slots']['hero'];
+
+        return $composition;
+    }
+}
+
+function fixedWorkflowFixture(bool $twoSlots = false): Page
 {
     $panel = Panel::make()->id('fixed-workflow')->default();
     Filament\Facades\Filament::registerPanel($panel);
@@ -94,6 +115,8 @@ function fixedWorkflowFixture(): Page
         ->name('filament.fixed-workflow.resources.pages.index');
     Route::get('/fixed-workflow/pages/{record}/sections', static fn (): string => 'Sections')
         ->name('filament.fixed-workflow.resources.pages.manageSections');
+    Route::get('/fixed-workflow/sections/{record}/draft', static fn (): string => 'Section')
+        ->name('filament.fixed-workflow.resources.sections.draft');
     Route::getRoutes()->refreshNameLookups();
     View::addNamespace('fixed-workflow', __DIR__ . '/Fixtures/fixed-workflow');
     config([
@@ -186,6 +209,16 @@ function fixedWorkflowFixture(): Page
             'page_id' => $pageId, 'section_id' => $sectionId, 'stage' => $stage,
             'slot' => 'hero', 'order_column' => 1, 'occurrence_id' => 'f5b6af1c-e217-40e5-b658-5322336e772c',
         ]);
+    }
+
+    if ($twoSlots) {
+        config(['phi-cms.pages' => [TwoSlotWorkflowPage::class]]);
+        foreach (['draft', 'published'] as $stage) {
+            DB::table('page_section')->insert([
+                'page_id' => $pageId, 'section_id' => $sectionId, 'stage' => $stage,
+                'slot' => 'footer', 'order_column' => 2, 'occurrence_id' => 'a5b6af1c-e217-40e5-b658-5322336e772c',
+            ]);
+        }
     }
 
     return Page::findOrFail($pageId);
@@ -311,8 +344,7 @@ it('preserves named slots in native composition saves and allows incomplete draf
     $this->assertDatabaseMissing('page_section', ['page_id' => $page->id, 'stage' => 'draft']);
 
     $published = $page->sections()->firstOrFail();
-    $component->set('pageRows', [['pivot_id' => null, 'section_id' => $published->id, 'slot' => 'hero']])
-        ->call('savePageComposition')->assertSuccessful()->assertHasNoErrors()
+    $component->call('addPageSection', $published->id)->assertSuccessful()->assertHasNoErrors()
         ->assertSet('pageRows.0.slot', 'hero')
         ->call('reviewPagePublication')->assertHasNoErrors()
         ->call('publishPage')->assertHasNoErrors();
@@ -322,4 +354,273 @@ it('preserves named slots in native composition saves and allows incomplete draf
         'section_id' => $published->id, 'occurrence_id' => 'f5b6af1c-e217-40e5-b658-5322336e772c',
     ]);
     $this->assertDatabaseHas('pages', ['id' => $page->id, 'slug' => 'home', 'page_version' => 6]);
+});
+
+it('restores a removed original before surviving fixed slots without changing public assignments', function (): void {
+    $page = fixedWorkflowFixture();
+    config(['phi-cms.pages' => [TwoSlotWorkflowPage::class]]);
+    $hero = $page->draftSectionAssignments()->firstOrFail();
+    foreach (['draft', 'published'] as $stage) {
+        DB::table('page_section')->insert([
+            'page_id' => $page->id, 'section_id' => $hero->section_id, 'stage' => $stage,
+            'slot' => 'footer', 'order_column' => 2, 'occurrence_id' => 'a5b6af1c-e217-40e5-b658-5322336e772c',
+        ]);
+    }
+    $before = DB::table('page_section')->where('stage', 'published')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('removePageSection', $hero->id)->assertHasNoErrors()
+        ->call('addPageSection', $hero->section_id)->assertHasNoErrors()
+        ->assertSet('pageRows.0.slot', 'hero')
+        ->assertSet('pageRows.1.slot', 'footer');
+
+    $this->assertDatabaseHas('page_section', [
+        'page_id' => $page->id, 'stage' => 'draft', 'slot' => 'hero',
+        'occurrence_id' => $hero->occurrence_id, 'order_column' => 1,
+    ]);
+    foreach ($before as $assignment) {
+        $this->assertDatabaseHas('page_section', $assignment);
+    }
+});
+
+it('rejects adding an occupied original or an unrelated fixed Section without partial writes', function (bool $replacement): void {
+    $page = fixedWorkflowFixture();
+    $sectionId = (int) $page->sections()->firstOrFail()->id;
+    if ($replacement) {
+        $section = (array) DB::table('sections')->where('id', $sectionId)->first();
+        unset($section['id']);
+        $section['slug'] = 'replacement';
+        $sectionId = DB::table('sections')->insertGetId($section);
+    }
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('addPageSection', $sectionId)->assertHasErrors('workflow');
+
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $assignment) {
+        $this->assertDatabaseHas('page_section', $assignment);
+    }
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 1]);
+})->with([false, true]);
+
+it('lets preview choose each missing original slot for a shared Section before publishing', function (): void {
+    $page = fixedWorkflowFixture(twoSlots: true);
+    $assignments = $page->draftSectionAssignments()->get();
+    $public = DB::table('page_section')->where('stage', 'published')->get()->map(fn (object $row): array => (array) $row)->all();
+    $component = Livewire::test(Preview::class, ['pageId' => $page->id]);
+    foreach ($assignments as $assignment) {
+        $component->call('removePageSection', $assignment->id)->assertHasNoErrors();
+    }
+
+    $component->assertSee('Restore hero')->assertSee('Restore footer')
+        ->call('addPageSection', $assignments[0]->section_id, 'footer')->assertHasNoErrors()
+        ->call('addPageSection', $assignments[0]->section_id, 'hero')->assertHasNoErrors()
+        ->assertSet('pageRows.0.slot', 'hero')->assertSet('pageRows.1.slot', 'footer');
+
+    foreach ($public as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+    foreach ($assignments as $index => $assignment) {
+        $this->assertDatabaseHas('page_section', [
+            'page_id' => $page->id, 'stage' => 'draft', 'slot' => $assignment->slot,
+            'occurrence_id' => $assignment->occurrence_id, 'order_column' => $index + 1,
+        ]);
+    }
+    $component->call('reviewPagePublication')->assertHasNoErrors()
+        ->call('publishPage')->assertHasNoErrors();
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 6]);
+});
+
+it('lets admin choose each missing original slot for a shared Section before publishing', function (): void {
+    $page = fixedWorkflowFixture(twoSlots: true);
+    config(['phi-cms.sections' => [FixedWorkflowSection::class, FixedWorkflowServices::class]]);
+    $assignments = $page->draftSectionAssignments()->get();
+    $public = DB::table('page_section')->where('stage', 'published')->get()->map(fn (object $row): array => (array) $row)->all();
+    $component = Livewire::test(ManagePageSections::class, ['record' => $page->id]);
+    foreach ($assignments as $assignment) {
+        $component->callAction(TestAction::make('removeSection')->table($assignment))->assertHasNoErrors();
+    }
+
+    foreach (['footer', 'hero'] as $slot) {
+        $component->callAction(TestAction::make('addSection')->table(), data: [
+            'section_id' => $assignments[0]->section_id, 'slot' => $slot,
+        ])->assertHasNoErrors();
+    }
+
+    foreach ($public as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+    foreach ($assignments as $index => $assignment) {
+        $this->assertDatabaseHas('page_section', [
+            'page_id' => $page->id, 'stage' => 'draft', 'slot' => $assignment->slot,
+            'occurrence_id' => $assignment->occurrence_id, 'order_column' => $index + 1,
+        ]);
+    }
+    Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('reviewPagePublication')->assertHasNoErrors()
+        ->call('publishPage')->assertHasNoErrors();
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 6]);
+});
+
+it('refuses ambiguous identity-only restoration atomically and lets preview correct the choice', function (): void {
+    $page = fixedWorkflowFixture(twoSlots: true);
+    $assignments = $page->draftSectionAssignments()->get();
+    $component = Livewire::test(Preview::class, ['pageId' => $page->id]);
+    foreach ($assignments as $assignment) {
+        $component->call('removePageSection', $assignment->id)->assertHasNoErrors();
+    }
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    $component->call('addPageSection', $assignments[0]->section_id)
+        ->assertHasErrors('workflow')
+        ->assertSee('Choose one missing original fixed-slot occurrence to restore.')
+        ->assertSet('version', 3)->assertSet('pageRows', []);
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 3]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+    $component->call('addPageSection', $assignments[0]->section_id, 'hero')
+        ->assertHasNoErrors()->assertSet('pageRows.0.slot', 'hero');
+});
+
+it('rejects forged or repeated explicit fixed-slot restoration without writes', function (string $slot, bool $replacement, bool $remove): void {
+    $page = fixedWorkflowFixture();
+    $assignment = $page->draftSectionAssignments()->firstOrFail();
+    $sectionId = (int) $assignment->section_id;
+    if ($replacement) {
+        $section = (array) DB::table('sections')->where('id', $sectionId)->first();
+        unset($section['id']);
+        $section['slug'] = 'replacement';
+        $sectionId = DB::table('sections')->insertGetId($section);
+    }
+    $component = Livewire::test(Preview::class, ['pageId' => $page->id]);
+    if ($remove) {
+        $component->call('removePageSection', $assignment->id)->assertHasNoErrors();
+    }
+    $version = $page->fresh()->page_version;
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    $component->call('addPageSection', $sectionId, $slot)->assertHasErrors('workflow');
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => $version]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+})->with([
+    'unknown slot' => ['unknown', false, true],
+    'unrelated replacement' => ['hero', true, true],
+    'occupied original' => ['hero', false, false],
+]);
+
+it('rejects stale explicit restoration through native preview and admin actions', function (bool $admin): void {
+    $page = fixedWorkflowFixture();
+    config(['phi-cms.sections' => [FixedWorkflowSection::class, FixedWorkflowServices::class]]);
+    $assignment = $page->draftSectionAssignments()->firstOrFail();
+    Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('removePageSection', $assignment->id)->assertHasNoErrors();
+    $component = $admin
+        ? Livewire::test(ManagePageSections::class, ['record' => $page->id])
+        : Livewire::test(Preview::class, ['pageId' => $page->id]);
+    Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('savePageDraft')->assertHasNoErrors();
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    if ($admin) {
+        $component->callAction(TestAction::make('addSection')->table(), data: [
+            'section_id' => $assignment->section_id, 'slot' => 'hero',
+        ])->assertHasErrors('sections');
+    } else {
+        $component->call('addPageSection', $assignment->section_id, 'hero')->assertHasErrors('workflow');
+    }
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 3]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+})->with(['preview' => false, 'admin' => true]);
+
+it('hides unauthorized restoration labels and rechecks selection authority on execution', function (string $ability): void {
+    $page = fixedWorkflowFixture();
+    $assignment = $page->draftSectionAssignments()->firstOrFail();
+    $component = Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('removePageSection', $assignment->id)->assertHasNoErrors()
+        ->assertSee('Restore hero');
+    Gate::define($ability, fn (): bool => false);
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    Livewire::test(Preview::class, ['pageId' => $page->id])->assertDontSee('Restore hero');
+    $component->call('addPageSection', $assignment->section_id, 'hero')->assertForbidden();
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 2]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+})->with(['viewAny', 'view', 'useInPage']);
+
+it('requires an original slot choice in the admin form when a shared identity is ambiguous', function (): void {
+    $page = fixedWorkflowFixture(twoSlots: true);
+    config(['phi-cms.sections' => [FixedWorkflowSection::class, FixedWorkflowServices::class]]);
+    $assignments = $page->draftSectionAssignments()->get();
+    $component = Livewire::test(ManagePageSections::class, ['record' => $page->id]);
+    foreach ($assignments as $assignment) {
+        $component->callAction(TestAction::make('removeSection')->table($assignment))->assertHasNoErrors();
+    }
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    $component->callAction(TestAction::make('addSection')->table(), data: [
+        'section_id' => $assignments[0]->section_id,
+    ])->assertHasFormErrors(['slot' => 'required']);
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 3]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+});
+
+it('rechecks authority after an admin restoration form was displayed', function (string $ability): void {
+    $page = fixedWorkflowFixture();
+    config(['phi-cms.sections' => [FixedWorkflowSection::class, FixedWorkflowServices::class]]);
+    $assignment = $page->draftSectionAssignments()->firstOrFail();
+    $component = Livewire::test(ManagePageSections::class, ['record' => $page->id])
+        ->callAction(TestAction::make('removeSection')->table($assignment))->assertHasNoErrors()
+        ->mountAction(TestAction::make('addSection')->table())
+        ->fillForm(['section_id' => $assignment->section_id, 'slot' => 'hero']);
+    Gate::define($ability, fn (): bool => false);
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+
+    $component->call('callMountedAction');
+    if ($ability === 'compose') {
+        $component->assertForbidden();
+    } else {
+        $component->assertHasFormErrors(['section_id']);
+    }
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 2]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
+})->with(['compose', 'useInPage']);
+
+it('does not silently repair forged existing fixed-slot order', function (): void {
+    $page = fixedWorkflowFixture(twoSlots: true);
+    $before = DB::table('page_section')->get()->map(fn (object $row): array => (array) $row)->all();
+    $hero = $page->draftSectionAssignments()->firstOrFail();
+
+    Livewire::test(Preview::class, ['pageId' => $page->id])
+        ->call('movePageSection', $hero->id, 'down')->assertHasErrors('workflow')
+        ->assertSee('Fixed slots must retain their declared order.');
+
+    $this->assertDatabaseHas('pages', ['id' => $page->id, 'page_version' => 1]);
+    $this->assertDatabaseCount('page_section', count($before));
+    foreach ($before as $row) {
+        $this->assertDatabaseHas('page_section', $row);
+    }
 });

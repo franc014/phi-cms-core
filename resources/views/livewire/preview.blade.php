@@ -108,6 +108,11 @@
                             </div>
                         @endforeach
                         @include('phi-cms-core::livewire.section-creation-links')
+                        @foreach ($restorableFixedSlotChoices ?? [] as $choice)
+                            <x-filament::button wire:key="restore-fixed-{{ $choice['slot'] }}" color="gray" wire:click="addPageSection({{ $choice['section_id'] }}, @js($choice['slot']))">
+                                {{ $choice['label'] }}
+                            </x-filament::button>
+                        @endforeach
                         @if ($canComposePage && count($selectableSectionChoices) > 0)
                             <p class="text-sm">{{ __('phi-cms-core::workflow.shared_section_help') }}</p>
                             <label class="block text-sm font-medium">{{ __('phi-cms-core::workflow.add_existing_section') }}

@@ -28,6 +28,8 @@ return [
     'copy_published_services' => 'Copy published Services',
     'independent_services_help' => 'New and copy create independent unpublished Sections. Copy uses only reviewed published text, never source drafts. These choices open the Draft sections manager; save pending workspace changes before leaving.',
     'add_existing_section' => 'Add existing Section',
+    'restore_fixed_slot' => 'Restore :slot — :section',
+    'original_fixed_slot' => 'Original fixed slot',
     'remove_assignment' => 'Remove assignment',
     'edit_section_content' => 'Edit Section content',
     'library_title' => 'Library title',

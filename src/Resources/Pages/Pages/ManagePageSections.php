@@ -208,6 +208,8 @@ class ManagePageSections extends ManageRelatedRecords
                             ->helperText(__('phi-cms-core::workflow.shared_section_help'))
                             ->required()
                             ->searchable()
+                            ->live()
+                            ->afterStateUpdated(fn (Set $set) => $set('slot', null))
                             ->options(fn (): array => collect(app(PageContent::class)->selectableSectionChoices($this->getOwnerRecord()))
                                 ->mapWithKeys(function (array $choice): array {
                                     $section = $choice['section'];
@@ -217,10 +219,16 @@ class ManagePageSections extends ManageRelatedRecords
 
                                     return [$section->getKey() => $choice['label']];
                                 })
-                                ->all())])
+                                ->all()),
+                            Select::make('slot')
+                                ->label(__('phi-cms-core::workflow.original_fixed_slot'))
+                                ->options(fn (Get $get): array => $this->restorableSlots($get('section_id')))
+                                ->visible(fn (Get $get): bool => $this->restorableSlots($get('section_id')) !== [])
+                                ->required(fn (Get $get): bool => count($this->restorableSlots($get('section_id'))) > 1),
+                        ])
                         ->action(function (array $data): void {
                             $rows = $this->draftRows();
-                            $rows[] = ['pivot_id' => null, 'section_id' => (int) $data['section_id'], 'slot' => null];
+                            $rows[] = ['pivot_id' => null, 'section_id' => (int) $data['section_id'], 'slot' => $data['slot'] ?? null];
                             $this->saveRows($rows);
                         })
                         ->successNotificationTitle(__('phi-cms-core::workflow.notifications.section_assigned')),
@@ -317,7 +325,18 @@ class ManagePageSections extends ManageRelatedRecords
         return $this->getOwnerRecord()->page_version !== null ? $schema : SectionResource::form($schema);
     }
 
-    /** @return list<array{pivot_id: int, section_id: int, slot: int|null}> */
+    /** @return array<string, string> */
+    private function restorableSlots(mixed $sectionId): array
+    {
+        if (! is_numeric($sectionId)) {
+            return [];
+        }
+
+        return collect(app(PageContent::class)->restorableFixedSlotChoices($this->getOwnerRecord()))
+            ->where('section_id', (int) $sectionId)->pluck('label', 'slot')->all();
+    }
+
+    /** @return list<array{pivot_id: int, section_id: int, slot: string|null}> */
     private function draftRows(): array
     {
         abort_unless(static::canAccess(['record' => $this->getOwnerRecord()]), 403);
@@ -326,7 +345,7 @@ class ManagePageSections extends ManageRelatedRecords
             ->map(fn (PageSection $row): array => ['pivot_id' => (int) $row->id, 'section_id' => (int) $row->section_id, 'slot' => $row->slot])->all();
     }
 
-    /** @param list<array{pivot_id: int|null, section_id: int, slot: int|null}> $rows */
+    /** @param list<array{pivot_id: int|null, section_id: int, slot: string|null}> $rows */
     private function saveRows(array $rows): void
     {
         try {

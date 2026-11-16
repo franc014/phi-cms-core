@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'restore_fixed_slot' => 'Restaurar :slot — :section',
+    'original_fixed_slot' => 'Posición fija original',
     'preview' => 'Vista previa del borrador guardado',
     'page_draft_preview' => 'Vista previa del borrador de Página',
     'page_draft_preview_help' => 'Este lienzo privado usa el borrador guardado de la Página. Los metadatos y la composición de la Página permanecen privados hasta que se publique; las Secciones publicadas de forma independiente pueden actualizar sus usos en vivo sin publicar esta Página.',

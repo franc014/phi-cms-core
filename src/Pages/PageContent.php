@@ -416,6 +416,35 @@ final class PageContent
             ->all();
     }
 
+    /** @return list<array{section_id: int, slot: string, label: string}> */
+    public function restorableFixedSlotChoices(Page $page): array
+    {
+        $fresh = $this->authorizePreview($page);
+        $this->authorize('compose', $fresh);
+        $composition = $this->pages->composition($this->draftMetadata($fresh)['template']);
+        if ($composition['mode'] !== 'fixed') {
+            return [];
+        }
+        $sections = collect($this->selectableSections($fresh))->keyBy('id');
+        $occupied = array_column($this->rawRows($fresh->getKey(), 'draft'), 'slot');
+        $baselines = collect($this->rawRows($fresh->getKey(), 'published'))->keyBy('slot');
+        $choices = [];
+        foreach ($composition['slots'] as $slot => $definition) {
+            $baseline = $baselines->get($slot);
+            $section = $baseline === null ? null : $sections->get($baseline['section_id']);
+            if ($section === null || $section->type !== $definition['type'] || in_array($slot, $occupied, true)) {
+                continue;
+            }
+            $choices[] = [
+                'section_id' => (int) $section->getKey(),
+                'slot' => $slot,
+                'label' => __('phi-cms-core::workflow.restore_fixed_slot', ['slot' => $slot, 'section' => $section->title]),
+            ];
+        }
+
+        return $choices;
+    }
+
     /**
      * @return list<array{section: Section, usage_count: int, label: string}>
      */
@@ -647,6 +676,38 @@ final class PageContent
             $fixedSlotBaselines = $composition['mode'] === 'fixed'
                 ? collect($this->rawRows($fresh->getKey(), 'published'))->keyBy('slot')
                 : collect();
+            if ($composition['mode'] === 'fixed') {
+                $positions = array_flip(array_keys($composition['slots']));
+                $restored = [];
+                foreach ($rows as $index => $row) {
+                    if (($row['pivot_id'] ?? null) !== null) {
+                        continue;
+                    }
+                    if (($row['slot'] ?? null) === null) {
+                        $candidates = $fixedSlotBaselines->filter(
+                            fn (array $baseline): bool => (int) $baseline['section_id'] === $row['section_id']
+                                && ! in_array($baseline['slot'], array_column($rows, 'slot'), true),
+                        );
+                        if ($candidates->count() !== 1) {
+                            throw ValidationException::withMessages(['sections' => 'Choose one missing original fixed-slot occurrence to restore.']);
+                        }
+                        $rows[$index]['slot'] = $candidates->first()['slot'];
+                    }
+                    $restored[$index] = $rows[$index];
+                }
+                $rows = array_values(array_diff_key($rows, $restored));
+                foreach ($restored as $row) {
+                    $position = count($rows);
+                    foreach ($rows as $index => $existingRow) {
+                        if (($positions[$existingRow['slot'] ?? ''] ?? PHP_INT_MAX) > ($positions[$row['slot']] ?? PHP_INT_MAX)) {
+                            $position = $index;
+
+                            break;
+                        }
+                    }
+                    array_splice($rows, $position, 0, [$row]);
+                }
+            }
             $normalizedRows = [];
             foreach ($rows as $index => $row) {
                 $section = $selected->get($row['section_id']);

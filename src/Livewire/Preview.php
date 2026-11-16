@@ -373,11 +373,15 @@ class Preview extends FormsComponent
         }
     }
 
-    public function addPageSection(int $sectionId): void
+    public function addPageSection(int $sectionId, ?string $slot = null): void
     {
         abort_unless($this->pageMode, 403);
-        $this->pageRows[] = ['pivot_id' => null, 'section_id' => $sectionId, 'slot' => null];
+        $previousRows = $this->pageRows;
+        $this->pageRows[] = ['pivot_id' => null, 'section_id' => $sectionId, 'slot' => $slot];
         $this->savePageComposition();
+        if ($this->getErrorBag()->isNotEmpty()) {
+            $this->pageRows = $previousRows;
+        }
     }
 
     public function restoreLegacyPageSection(int $sectionId): void
@@ -608,6 +612,8 @@ class Preview extends FormsComponent
                 'canPublishPage' => auth()->user()?->fresh()?->can('publish', $page) ?? false,
                 'canDeletePage' => auth()->user()?->fresh()?->can('delete', $page) ?? false,
                 'selectableSectionChoices' => app(PageContent::class)->selectableSectionChoices($page),
+                'restorableFixedSlotChoices' => (auth()->user()?->fresh()?->can('compose', $page) ?? false)
+                    ? app(PageContent::class)->restorableFixedSlotChoices($page) : [],
                 'restorableLegacySections' => app(PageContent::class)->restorableLegacySections($page),
             ]);
         }
