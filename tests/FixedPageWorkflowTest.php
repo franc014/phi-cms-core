@@ -357,15 +357,8 @@ it('preserves named slots in native composition saves and allows incomplete draf
 });
 
 it('restores a removed original before surviving fixed slots without changing public assignments', function (): void {
-    $page = fixedWorkflowFixture();
-    config(['phi-cms.pages' => [TwoSlotWorkflowPage::class]]);
+    $page = fixedWorkflowFixture(twoSlots: true);
     $hero = $page->draftSectionAssignments()->firstOrFail();
-    foreach (['draft', 'published'] as $stage) {
-        DB::table('page_section')->insert([
-            'page_id' => $page->id, 'section_id' => $hero->section_id, 'stage' => $stage,
-            'slot' => 'footer', 'order_column' => 2, 'occurrence_id' => 'a5b6af1c-e217-40e5-b658-5322336e772c',
-        ]);
-    }
     $before = DB::table('page_section')->where('stage', 'published')->get()->map(fn (object $row): array => (array) $row)->all();
 
     Livewire::test(Preview::class, ['pageId' => $page->id])
