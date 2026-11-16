@@ -1053,6 +1053,7 @@ final class PageContent
         if ($page->page_version !== null && $fields['template'] !== $page->template) {
             throw ValidationException::withMessages(['fields.template' => 'The Page template is developer-controlled after adoption.']);
         }
+        $this->validateFixedSlug($fields['template'], $fields['slug']);
         if ($fields['metatags'] !== null && ! is_array($fields['metatags'])) {
             throw ValidationException::withMessages(['fields.metatags' => 'SEO metadata must be an object or null.']);
         }
@@ -1407,6 +1408,7 @@ final class PageContent
         if (! is_string($fields['template']) || ! $this->pages->has($fields['template'])) {
             throw ValidationException::withMessages(['fields.template' => 'Choose a registered compatible Page template.']);
         }
+        $this->validateFixedSlug($fields['template'], $fields['slug']);
 
         return [
             'title' => $fields['title'],
@@ -1414,6 +1416,14 @@ final class PageContent
             'description' => $fields['description'],
             'template' => $fields['template'],
         ];
+    }
+
+    private function validateFixedSlug(string $template, string $slug): void
+    {
+        $fixedSlug = $this->pages->get($template)::fixedSlug();
+        if ($fixedSlug !== null && $slug !== $fixedSlug) {
+            throw ValidationException::withMessages(['fields.slug' => 'The slug is developer-controlled for this Page template.']);
+        }
     }
 
     /**

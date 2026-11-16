@@ -29,6 +29,11 @@ final class PageRegistry
                 throw new InvalidArgumentException("Missing Blade view for Page template: {$key}.");
             }
 
+            $fixedSlug = $template::fixedSlug();
+            if ($fixedSlug !== null && (mb_strlen($fixedSlug) > 100 || ! preg_match('/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/D', $fixedSlug))) {
+                throw new InvalidArgumentException("Invalid fixed slug for Page template: {$key}.");
+            }
+
             $composition = $template::composition();
             $this->validateComposition($key, $composition, $sections);
             $this->templates[$key] = $template;
@@ -63,6 +68,7 @@ final class PageRegistry
         return hash('sha256', json_encode([
             'key' => $key,
             'view' => $this->get($key)::view(),
+            'fixed_slug' => $this->get($key)::fixedSlug(),
             'composition' => $this->composition($key),
         ], JSON_THROW_ON_ERROR));
     }

@@ -17,6 +17,7 @@ use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Models\Section;
 use JFA\PhiCmsCore\Pages\PageConflict;
 use JFA\PhiCmsCore\Pages\PageContent;
+use JFA\PhiCmsCore\Pages\PageRegistry;
 use JFA\PhiCmsCore\Pages\PageSeoImageContext;
 use JFA\PhiCmsCore\Pages\PageTemporaryUploads;
 use JFA\PhiCmsCore\Resources\Pages\PageResource;
@@ -166,7 +167,7 @@ class Preview extends FormsComponent
     #[Locked]
     public array $pageBaseline = [];
 
-    /** @var list<array{pivot_id: int|null, section_id: int, slot: int|null}> */
+    /** @var list<array{pivot_id: int|null, section_id: int, slot: string|null}> */
     public array $pageRows = [];
 
     /** @var array<string, mixed>|null */
@@ -599,6 +600,7 @@ class Preview extends FormsComponent
                 'canPublish' => $selectedSection !== null && $this->allows('publish', $selectedSection),
                 'pageTemplateView' => app(PageContent::class)->templateView($page, true),
                 'pageData' => $this->pageData,
+                'fixedPageSlug' => app(PageRegistry::class)->get((string) $page->getAttribute('template'))::fixedSlug(),
                 'pageRows' => $this->pageRows,
                 'pageReview' => $this->pagePublicationReview,
                 'canUpdatePage' => auth()->user()?->fresh()?->can('update', $page) ?? false,
@@ -854,7 +856,7 @@ class Preview extends FormsComponent
             ->map(fn (Section $section): array => [
                 'pivot_id' => (int) $section->pivot->id,
                 'section_id' => (int) $section->getKey(),
-                'slot' => $section->pivot->slot === null ? null : (int) $section->pivot->slot,
+                'slot' => $section->pivot->slot,
             ])->values()->all();
     }
 

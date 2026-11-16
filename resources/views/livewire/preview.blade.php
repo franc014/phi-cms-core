@@ -52,8 +52,11 @@
                         </label>
                         @error('fields.title') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                         <label class="block text-sm font-medium">Slug
-                            <input type="text" wire:model="pageData.slug" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.slug') aria-invalid="true" @enderror />
+                            <input type="text" wire:model="pageData.slug" @readonly($fixedPageSlug !== null) class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.slug') aria-invalid="true" @enderror />
                         </label>
+                        @if ($fixedPageSlug !== null)
+                            <p class="text-sm">This lookup slug is developer-controlled by the Page template.</p>
+                        @endif
                         @error('fields.slug') <p role="alert" class="text-sm text-red-700 dark:text-red-300">{{ $message }}</p> @enderror
                         <label class="block text-sm font-medium">Description
                             <textarea wire:model="pageData.description" class="mt-1 block w-full rounded border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-white" @error('fields.description') aria-invalid="true" @enderror></textarea>

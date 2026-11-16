@@ -8,6 +8,11 @@ abstract class PageTemplate
 
     abstract public static function view(): string;
 
+    public static function fixedSlug(): ?string
+    {
+        return null;
+    }
+
     /**
      * @return array{
      *     mode: string,
