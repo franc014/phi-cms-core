@@ -206,12 +206,12 @@ final class MenuContent
     public function publishedForPageReview(string $key, Page $prospectivePage): array
     {
         $menu = $this->adoptedMenu($key);
-        $rows = $this->publicRows($menu);
         $prospectivePage = clone $prospectivePage;
         $prospectivePage->setAttribute('status', PageStatus::PUBLISHED);
         $prospectivePage->setAttribute('published_at', $prospectivePage->published_at ?? now());
 
-        $resolved = $this->withConsistentReadSnapshot(function () use ($menu, $key, $rows, $prospectivePage): array {
+        $resolved = $this->withConsistentReadSnapshot(function () use ($menu, $key, $prospectivePage): array {
+            $rows = $this->publicRows($menu);
             $snapshot = $this->referenceSnapshot($menu, $rows);
             $snapshot = $this->withProspectivePageSnapshot($snapshot, $prospectivePage);
 
