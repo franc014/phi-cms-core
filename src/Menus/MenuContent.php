@@ -195,6 +195,39 @@ final class MenuContent
         ));
     }
 
+    /**
+     * Resolve the published menu against a prospective Page publication.
+     *
+     * The menu stage remains published. Only the Page and its prospective
+     * Section assignments are substituted for this private review.
+     *
+     * @return list<array{id: string, label: string, href: string}>
+     */
+    public function publishedForPageReview(string $key, Page $prospectivePage): array
+    {
+        $menu = $this->adoptedMenu($key);
+        $rows = $this->publicRows($menu);
+        $prospectivePage = clone $prospectivePage;
+        $prospectivePage->setAttribute('status', PageStatus::PUBLISHED);
+        $prospectivePage->setAttribute('published_at', $prospectivePage->published_at ?? now());
+
+        $resolved = $this->withConsistentReadSnapshot(function () use ($menu, $key, $rows, $prospectivePage): array {
+            $snapshot = $this->referenceSnapshot($menu, $rows);
+            $snapshot = $this->withProspectivePageSnapshot($snapshot, $prospectivePage);
+
+            return $this->resolveRows($menu, $key, $rows, preview: false, snapshot: $snapshot);
+        });
+
+        return array_values(array_map(
+            static fn (array $row): array => [
+                'id' => (string) $row['item_key'],
+                'label' => (string) $row['label'],
+                'href' => (string) $row['resolution']['href'],
+            ],
+            array_filter($resolved, static fn (array $row): bool => $row['resolution']['status'] === 'available' || $row['resolution']['status'] === 'untracked'),
+        ));
+    }
+
     /** @return array{items: list<array<string, mixed>>, feedback: list<array<string, mixed>>, version: int} */
     public function preview(string $key): array
     {
@@ -1276,9 +1309,9 @@ final class MenuContent
     }
 
     /** @return list<array<string, mixed>> */
-    private function resolveRows(Menu $menu, string $key, array $rows, bool $preview, ?Authenticatable $actor = null): array
+    private function resolveRows(Menu $menu, string $key, array $rows, bool $preview, ?Authenticatable $actor = null, ?array $snapshot = null): array
     {
-        $snapshot = $this->referenceSnapshot($menu, $rows);
+        $snapshot ??= $this->referenceSnapshot($menu, $rows);
         $resolved = [];
         foreach ($rows as $row) {
             $destination = $row['destination'] ?? null;
@@ -1289,6 +1322,32 @@ final class MenuContent
         }
 
         return $resolved;
+    }
+
+    /** @param array<string, mixed> $snapshot */
+    private function withProspectivePageSnapshot(array $snapshot, Page $page): array
+    {
+        $pageId = (int) $page->getKey();
+        $snapshot['pages'][$pageId] = $page;
+
+        if (! $page->relationLoaded('sections')) {
+            return $snapshot;
+        }
+
+        foreach ($page->getRelation('sections') as $section) {
+            if (! $section instanceof Section) {
+                continue;
+            }
+
+            $sectionId = (int) $section->getKey();
+            $snapshot['sections'][$sectionId] = $section;
+            $pivot = $section->getRelation('pivot');
+            if ($pivot !== null) {
+                $snapshot['memberships'][$pageId . '|' . $sectionId] = $pivot;
+            }
+        }
+
+        return $snapshot;
     }
 
     /** @return array{href: string|null, status: string, message: string|null, title: string|null, proposed_path?: string|null, fingerprint: array<string, mixed>} */

@@ -17,6 +17,7 @@ use JFA\PhiCmsCore\Menus\MenuConflict;
 use JFA\PhiCmsCore\Menus\MenuContent;
 use JFA\PhiCmsCore\Models\Menu;
 use JFA\PhiCmsCore\Models\MenuItem;
+use JFA\PhiCmsCore\Models\Page;
 use JFA\PhiCmsCore\Resources\Menus\MenuResource;
 use JFA\PhiCmsCore\Resources\Menus\Pages\EditMenu;
 use Livewire\Livewire;
@@ -833,4 +834,98 @@ it('allows a fresh unavailable Page review but never reuses resolved values afte
     expect($review['publishable'])->toBeFalse()
         ->and($review['items'][0]['target_label'])->toBeNull()
         ->and($review['items'][0]['message'])->toBe('The referenced Page has been removed.');
+});
+
+it('resolves the published menu against the Page under publication review', function (): void {
+    prepareMenuContentTest();
+    config(['phi-cms.navigation.fixed_pages.home.anchors.specimens.slot' => 'specimens']);
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    DB::table('pages')->where('id', 1)->update([
+        'status' => PageStatus::DRAFT->value,
+        'published_at' => null,
+        'page_version' => 1,
+    ]);
+    DB::table('page_section')->where('page_id', 1)->update(['slot' => 'specimens']);
+    DB::table('page_section')->insert([
+        'page_id' => 1,
+        'section_id' => 1,
+        'order_column' => 1,
+        'stage' => 'draft',
+        'occurrence_id' => (string) fake()->uuid(),
+        'slot' => 'specimens',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $items = $content->draftItems('header');
+    $items[0]['label'] = 'Private draft label';
+    $content->saveDraft('header', $items, (int) $menu->menu_version);
+
+    $prospective = Page::findOrFail(1);
+    $prospective->setRelation('sections', $prospective->draftSections()->where('sections.status', SectionStatus::ACTIVE)->get());
+
+    expect($content->published('header'))->toBe([]);
+
+    $links = $content->publishedForPageReview('header', $prospective);
+
+    expect($links)->toHaveCount(1)
+        ->and($links[0])->toMatchArray([
+            'label' => 'Specimens',
+            'href' => '/#specimens',
+        ]);
+});
+
+it('keeps other unavailable destinations out of a prospective Page review', function (): void {
+    prepareMenuContentTest();
+    config(['phi-cms.navigation.fixed_pages.home.anchors.specimens.slot' => 'specimens']);
+    $content = app(MenuContent::class);
+    $menu = $content->adoptConfiguredMenu('header');
+    DB::table('pages')->where('id', 1)->update([
+        'status' => PageStatus::DRAFT->value,
+        'published_at' => null,
+        'page_version' => 1,
+    ]);
+    DB::table('page_section')->where('page_id', 1)->update(['slot' => 'specimens']);
+    DB::table('page_section')->insert([
+        'page_id' => 1,
+        'section_id' => 1,
+        'order_column' => 1,
+        'stage' => 'draft',
+        'occurrence_id' => (string) fake()->uuid(),
+        'slot' => 'specimens',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('pages')->insert([
+        'id' => 2,
+        'title' => 'Draft expedition',
+        'slug' => 'draft-expedition',
+        'description' => 'An unpublished Page',
+        'status' => PageStatus::DRAFT->value,
+        'route' => '/draft-expedition',
+        'published_at' => null,
+        'page_version' => 1,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('menu_items')->insert([
+        'menu_id' => $menu->id,
+        'slug' => 'draft-expedition',
+        'label' => 'Draft expedition',
+        'url' => '/',
+        'order_column' => 2,
+        'stage' => 'published',
+        'item_key' => (string) fake()->uuid(),
+        'destination' => json_encode(['kind' => 'page', 'page_id' => 2], JSON_THROW_ON_ERROR),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $prospective = Page::findOrFail(1);
+    $prospective->setRelation('sections', $prospective->draftSections()->where('sections.status', SectionStatus::ACTIVE)->get());
+
+    $links = $content->publishedForPageReview('header', $prospective);
+
+    expect($links)->toHaveCount(1)
+        ->and($links[0]['label'])->toBe('Specimens');
 });
